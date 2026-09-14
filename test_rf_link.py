@@ -18,19 +18,28 @@ import struct
 import subprocess
 from datetime import datetime
 
+import glob
+
 LOG_FILE = "rf_link_test.log"
-SERIAL_PORT = "/dev/cu.usbmodem1404"
 PI_HOST = "raspi5.local"
 
 
+def find_pluto_serial_port() -> str:
+    """Auto-detect Pluto serial port on macOS."""
+    ports = glob.glob("/dev/cu.usbmodem*")
+    if not ports:
+        raise FileNotFoundError("No Pluto serial port found (/dev/cu.usbmodem*). Is the USB cable connected?")
+    return ports[0]
+
+
 class RFLinkLogger:
-    def __init__(self, path: str = LOG_FILE):
+    def __init__(self, path: str = LOG_FILE, port: str = ""):
         self.f = open(path, "w", encoding="utf-8")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.log("=" * 78)
         self.log(" TACTICAL SDR MESH (TSM-Net SG) - OVER-THE-AIR (OTA) RF LINK TEST")
         self.log(f" Timestamp:      {timestamp}")
-        self.log(f" Node A (Laptop): PlutoSDR AD9361 via {SERIAL_PORT}")
+        self.log(f" Node A (Laptop): PlutoSDR AD9361 via {port}")
         self.log(f" Node B (Pi 5):   Pluto+ SDR AD9361 via {PI_HOST} (usb:1.3.5)")
         self.log(f" Carrier Freq:   915.000 MHz (Static ISM Band, No Hopping)")
         self.log("=" * 78)
@@ -47,8 +56,8 @@ class RFLinkLogger:
 class LaptopPlutoController:
     """Controls the Laptop's PlutoSDR over onboard serial console."""
 
-    def __init__(self, port: str = SERIAL_PORT):
-        self.port = port
+    def __init__(self, port: str = ""):
+        self.port = port if port else find_pluto_serial_port()
         self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         self._init_session()
 
@@ -124,8 +133,8 @@ def run_remote_pi5_cmd(python_code: str) -> str:
 
 
 def run_rf_link_tests():
-    logger = RFLinkLogger()
     laptop_pluto = LaptopPlutoController()
+    logger = RFLinkLogger(port=laptop_pluto.port)
 
     logger.log("\n[SETUP 1/2] Initializing Node A (Laptop Pluto)...")
     laptop_pluto.set_frequency(915000000)
