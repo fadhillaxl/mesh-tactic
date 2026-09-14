@@ -1,0 +1,5 @@
+# Python dependencies for Tactical SDR Mesh (TSM-Net SG)
+# Core networking uses Python stdlib (fcntl, os, struct, socket, select)
+# SDR physical layer runs on system-installed GNU Radio 3.10 and gr-lora_sdr
+
+PyYAML>=6.0
