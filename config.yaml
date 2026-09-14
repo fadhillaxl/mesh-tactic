@@ -5,10 +5,9 @@
 
 sdr:
   # Connection URI to Pluto+ SDR
-  # Default USB RNDIS: "ip:192.168.2.1"
-  # Gigabit Ethernet on Pluto+: "ip:192.168.1.10" (or configured LAN IP)
-  # Direct USB: "usb:x.y.z"
-  uri: "ip:192.168.2.1"
+  # Verified on raspi5.local: "usb:1.3.5" (direct high-speed libusb context)
+  # Alternative USB RNDIS: "ip:192.168.2.1" | Gigabit Ethernet: "ip:192.168.1.10"
+  uri: "usb:1.3.5"
 
   # Static Local Oscillator (LO) Frequency (No hopping, locked single band)
   # 915 MHz ISM: 915000000 | 433 MHz ISM: 433000000 | 868 MHz: 868000000
