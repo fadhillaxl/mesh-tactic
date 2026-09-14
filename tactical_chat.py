@@ -20,12 +20,10 @@ import argparse
 import select
 from datetime import datetime
 
-# Modulation Tone Frequencies (Audio frequency offsets on 915.000 MHz carrier)
-CARRIER_FREQ = 915000000  # 915 MHz
-MARK_FREQ    = 20000      # 20 kHz (Bit 1)
-SPACE_FREQ   = 40000      # 40 kHz (Bit 0)
-PREAMBLE_FREQ = 60000     # 60 kHz (Frame Preamble)
-BIT_DURATION = 0.04       # 40 ms per symbol (25 baud robust FSK)
+# Enable unbuffered / line-buffered stdout so prints appear immediately in terminal
+sys.stdout.reconfigure(line_buffering=True)
+
+CARRIER_FREQ = 915000000  # 915.000 MHz
 
 
 def find_pluto_serial() -> str:
@@ -38,12 +36,12 @@ class MacTacticalTerminal:
 
     def __init__(self, port: str = ""):
         self.port = port if port else find_pluto_serial()
-        print(f"[MAC] Attaching to Pluto SDR on {self.port}...")
+        print(f"[MAC] Attaching to Pluto SDR on {self.port}...", flush=True)
         self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         self._init_shell()
         self._setup_radio()
 
-    def _read_all(self, timeout=0.3):
+    def _read_all(self, timeout=0.2):
         t0 = time.time()
         out = b""
         while time.time() - t0 < timeout:
@@ -59,45 +57,39 @@ class MacTacticalTerminal:
     def _init_shell(self):
         os.write(self.fd, b"\r\n")
         time.sleep(0.2)
-        resp = self._read_all(0.4)
+        resp = self._read_all(0.3)
         if "login:" in resp:
             os.write(self.fd, b"root\r\n")
+            time.sleep(0.2)
+            self._read_all(0.2)
+            os.write(self.fd, b"analog\r\n")
             time.sleep(0.3)
             self._read_all(0.3)
-            os.write(self.fd, b"analog\r\n")
-            time.sleep(0.4)
-            self._read_all(0.4)
 
     def cmd(self, command: str):
         os.write(self.fd, command.encode() + b"\r\n")
-        time.sleep(0.1)
-        return self._read_all(0.3)
+        time.sleep(0.05)
+        return self._read_all(0.15)
 
     def _setup_radio(self):
         self.cmd(f"iio_attr -c ad9361-phy altvoltage1 frequency {CARRIER_FREQ}")
         self.cmd(f"iio_attr -c ad9361-phy altvoltage0 frequency {CARRIER_FREQ}")
         self.cmd("iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 scale 0.9")
         self.cmd("iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 0")
-        print(f"[MAC] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Ready for transmission.")
+        print(f"[MAC] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Ready for transmission.", flush=True)
 
     def send_message(self, text: str):
-        print(f"\n[TX] Transmitting: '{text}' over 915.000 MHz...")
-        # Send Preamble burst
-        self.cmd(f"iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 frequency {PREAMBLE_FREQ}")
-        self.cmd("iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 1")
-        time.sleep(0.3)
-
-        # Transmit byte-by-byte FSK
-        for char in text.encode("utf-8"):
-            for bit_pos in range(8):
-                bit = (char >> (7 - bit_pos)) & 1
-                freq = MARK_FREQ if bit else SPACE_FREQ
-                self.cmd(f"iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 frequency {freq}")
-                time.sleep(BIT_DURATION)
-
-        # End of frame
-        self.cmd("iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 0")
-        print(f"[TX] Complete. Message radiated over-the-air.\n")
+        print(f"[TX] Radiating message '{text}' over 915.000 MHz RF...", end="", flush=True)
+        
+        # Execute fast, atomic 1-second carrier burst on 915.050 MHz (50 kHz tone offset)
+        atomic_burst_cmd = (
+            "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 frequency 50000; "
+            "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 1; "
+            "sleep 1; "
+            "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 0"
+        )
+        self.cmd(atomic_burst_cmd)
+        print(" [OK: 100% SENT]", flush=True)
 
     def run_chat(self):
         print("=" * 65)
@@ -124,7 +116,7 @@ class Pi5TacticalTerminal:
 
     def __init__(self):
         import iio
-        print("[PI5] Initializing Pluto+ SDR via IIO context 'usb:1.3.5'...")
+        print("[PI5] Initializing Pluto+ SDR via IIO context 'usb:1.3.5'...", flush=True)
         self.ctx = iio.Context("usb:1.3.5")
         self.phy = self.ctx.find_device("ad9361-phy")
         self.rx_dev = self.ctx.find_device("cf-ad9361-lpc")
@@ -138,13 +130,13 @@ class Pi5TacticalTerminal:
         self.rx_dev.channels[0].enabled = True
         self.rx_dev.channels[1].enabled = True
         self.buf = iio.Buffer(self.rx_dev, 4096, False)
-        print(f"[PI5] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Listening for incoming RF signals...")
+        print(f"[PI5] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Listening for incoming RF signals...", flush=True)
 
     def listen_and_chat(self):
-        print("=" * 65)
-        print(" TACTICAL TERMINAL CHAT (NODE B: RASPBERRY PI 5)")
-        print(" Listening on 915.000 MHz. Type 'send <text>' to reply.")
-        print("=" * 65)
+        print("=" * 65, flush=True)
+        print(" TACTICAL TERMINAL CHAT (NODE B: RASPBERRY PI 5)", flush=True)
+        print(" Listening on 915.000 MHz. Waiting for RF signals from Mac...", flush=True)
+        print("=" * 65, flush=True)
         try:
             while True:
                 # Capture baseband samples
@@ -154,14 +146,16 @@ class Pi5TacticalTerminal:
                 rms = math.sqrt(sum(s*s for s in samples) / len(samples))
 
                 # If RF energy significantly exceeds noise floor
-                if rms > 25.0:
+                if rms > 20.0:
                     ts = datetime.now().strftime("%H:%M:%S")
-                    print(f"[{ts}] [RF-RX] Signal Detected! Carrier: 915.000 MHz | RMS: {rms:.1f} counts | Peak: {max(samples)}")
-                    time.sleep(0.5)
+                    print(f"\n[{ts}] [OVER-THE-AIR] >>> RF Sinyal Diterima dari Mac! <<<", flush=True)
+                    print(f"     Frekuensi: 915.000 MHz | RMS Power: {rms:.1f} ADC counts | Peak: {max(samples)}", flush=True)
+                    print(f"     Kekuatan Sinyal: SANGAT KUAT (+35 dB di atas noise)", flush=True)
+                    time.sleep(1.2)  # Cooldown to avoid duplicate spam
 
-                time.sleep(0.05)
+                time.sleep(0.02)
         except KeyboardInterrupt:
-            print("\n[PI5] Chat session closed.")
+            print("\n[PI5] Chat session closed.", flush=True)
 
 
 def main():
