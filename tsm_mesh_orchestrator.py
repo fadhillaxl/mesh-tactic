@@ -138,10 +138,11 @@ class TacticalMeshOrchestrator:
     Orchestrates ingestion between Linux kernel TAP device and SDR UDP Socket PDUs.
     """
 
-    def __init__(self, config_path: str, dry_run: bool = False, sim_fd: Optional[int] = None):
+    def __init__(self, config_path: str, dry_run: bool = False, sim_fd: Optional[int] = None, peer: Optional[str] = None):
         self.cfg = load_config(config_path)
 
         self.dry_run = dry_run
+        self.peer = peer
         self.tap_name = self.cfg["network"].get("tap_device", "tap-radio")
         self.ipc_tx_port = int(self.cfg["network"].get("ipc_tx_port", 52001))
         self.ipc_rx_port = int(self.cfg["network"].get("ipc_rx_port", 52002))
@@ -163,14 +164,16 @@ class TacticalMeshOrchestrator:
             self.tap_fd = self._open_tap_interface(self.tap_name)
             print(f"[ORCHESTRATOR] Attached to TAP device: '{self.tap_name}' (MTU: {self.mtu})")
 
-        # Initialize UDP IPC Sockets (communication with GNU Radio Bridge)
+        # Initialize UDP Sockets (communication with GNU Radio Bridge or Peer Node)
         self.sock_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock_rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock_rx.bind(("127.0.0.1", self.ipc_rx_port))
+        self.sock_rx.bind(("0.0.0.0", self.ipc_rx_port))
         self.sock_rx.setblocking(False)
 
-        print(f"[ORCHESTRATOR] Attached to TAP device: '{self.tap_name}' (MTU: {self.mtu})")
-        print(f"[ORCHESTRATOR] SDR IPC Tx -> 127.0.0.1:{self.ipc_tx_port} | Rx <- 127.0.0.1:{self.ipc_rx_port}")
+        if self.peer:
+            print(f"[ORCHESTRATOR] Mode: DIRECT PEER MESH (Tunneling to {self.peer}:{self.ipc_rx_port})")
+        else:
+            print(f"[ORCHESTRATOR] SDR IPC Tx -> 127.0.0.1:{self.ipc_tx_port} | Rx <- 0.0.0.0:{self.ipc_rx_port}")
 
     def _open_tap_interface(self, dev_name: str) -> int:
         """Opens/creates the Linux persistent TAP interface using native fcntl."""
@@ -208,9 +211,11 @@ class TacticalMeshOrchestrator:
                             # Read raw Layer 2 Ethernet frame from batman-adv
                             raw_frame = os.read(self.tap_fd, 2048)
                             if raw_frame:
-                                # Pack into tactical framing and forward to GNU Radio
+                                # Pack into tactical framing and forward to peer or GNU Radio
                                 radio_packet = self.framing.pack(raw_frame)
-                                if self.dry_run:
+                                if self.peer:
+                                    self.sock_tx.sendto(radio_packet, (self.peer, self.ipc_rx_port))
+                                elif self.dry_run:
                                     # Dry-run loopback directly into Rx socket for testing
                                     self.sock_tx.sendto(radio_packet, ("127.0.0.1", self.ipc_rx_port))
                                 else:
@@ -226,7 +231,7 @@ class TacticalMeshOrchestrator:
                     # ----------------------------------------------------------
                     elif fd == self.sock_rx:
                         try:
-                            # Receive decoded LoRa PDU from GNU Radio
+                            # Receive decoded LoRa PDU from GNU Radio or peer node
                             data, _ = self.sock_rx.recvfrom(2048)
                             if data:
                                 result = self.framing.unpack(data)
@@ -269,6 +274,7 @@ class TacticalMeshOrchestrator:
 def main():
     parser = argparse.ArgumentParser(description="Tactical SDR Mesh Orchestrator (TSM-Net SG)")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    parser.add_argument("--peer", default=None, help="Remote peer IP address for direct node-to-node mesh tunneling")
     parser.add_argument("--dry-run", action="store_true", help="Simulate RF link via local loopback socket")
     args = parser.parse_args()
 
@@ -276,7 +282,7 @@ def main():
         print(f"[ERROR] Config file '{args.config}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    orchestrator = TacticalMeshOrchestrator(args.config, dry_run=args.dry_run)
+    orchestrator = TacticalMeshOrchestrator(args.config, dry_run=args.dry_run, peer=args.peer)
 
     def sig_handler(sig, frame):
         orchestrator.shutdown()

@@ -109,9 +109,19 @@ def run_hardware_tests():
     # --------------------------------------------------------------------------
     logger.log("\n[TEST 2/8] Scanning IIO Context & Pluto+ SDR Hardware Enumeration...")
     try:
-        # Attempt USB discovery
+        # Check CLI arguments for --uri
+        cli_uri = None
+        for idx, arg in enumerate(sys.argv):
+            if arg == "--uri" and idx + 1 < len(sys.argv):
+                cli_uri = sys.argv[idx + 1]
+
+        candidates = []
+        if cli_uri:
+            candidates.append(cli_uri)
+        candidates.extend(["usb:1.3.5", "ip:192.168.99.240:30431", "ip:192.168.2.1", "local:"])
+
         ctx = None
-        for uri in ["usb:1.3.5", "ip:192.168.2.1"]:
+        for uri in candidates:
             try:
                 ctx = iio.Context(uri)
                 logger.log(f"  * Successfully attached to IIO Context: '{uri}'")
@@ -119,16 +129,18 @@ def run_hardware_tests():
             except Exception:
                 continue
 
-        if not ctx:
-            # Fallback scan
-            scan = iio.ScanContext()
-            info = scan.get_info()
-            if info:
-                ctx = iio.Context(info[0].uri)
-                logger.log(f"  * Auto-discovered IIO Context: '{info[0].uri}'")
+        if not ctx and hasattr(iio, "ScanContext"):
+            try:
+                scan = iio.ScanContext()
+                info = scan.get_info()
+                if info:
+                    ctx = iio.Context(info[0].uri)
+                    logger.log(f"  * Auto-discovered IIO Context: '{info[0].uri}'")
+            except Exception:
+                pass
 
         if not ctx:
-            raise RuntimeError("No Pluto+ SDR IIO context found. Verify USB cable connection!")
+            raise RuntimeError(f"No Pluto+ SDR IIO context found. Tested candidates: {candidates}")
 
         logger.log(f"  * Hardware Description: {ctx.description}")
         logger.log(f"  * Model Attribute:      {ctx.attrs.get('hw_model', 'ADALM-PLUTO')}")
