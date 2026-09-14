@@ -32,12 +32,13 @@ def find_pluto_serial() -> str:
 
 
 class MacTacticalTerminal:
-    """Controls Laptop Pluto SDR for bidirectional text communication."""
+    """Controls Laptop Pluto SDR for bidirectional communication."""
 
     def __init__(self, port: str = ""):
         self.port = port if port else find_pluto_serial()
         print(f"[MAC] Attaching to Pluto SDR on {self.port}...", flush=True)
         self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        self.running = True
         self._init_shell()
         self._setup_radio()
 
@@ -79,9 +80,7 @@ class MacTacticalTerminal:
         print(f"[MAC] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Ready for transmission.", flush=True)
 
     def send_message(self, text: str):
-        print(f"[TX] Radiating message '{text}' over 915.000 MHz RF...", end="", flush=True)
-        
-        # Execute fast, atomic 1-second carrier burst on 915.050 MHz (50 kHz tone offset)
+        print(f"\n[TX] Radiating message '{text}' over 915.000 MHz RF...", end="", flush=True)
         atomic_burst_cmd = (
             "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 frequency 50000; "
             "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 1; "
@@ -89,13 +88,13 @@ class MacTacticalTerminal:
             "iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 0"
         )
         self.cmd(atomic_burst_cmd)
-        print(" [OK: 100% SENT]", flush=True)
+        print(f" [OK: TERKIRIM KE PI 5]\n[MAC-HQ] > ", end="", flush=True)
 
     def run_chat(self):
-        print("=" * 65)
-        print(" TACTICAL TERMINAL CHAT (NODE A: MAC)")
-        print(" Type message and hit ENTER to transmit. Type 'exit' to quit.")
-        print("=" * 65)
+        print("=" * 65, flush=True)
+        print(" TACTICAL TERMINAL CHAT (NODE A: MAC)", flush=True)
+        print(" Frekuensi: 915.000 MHz | Ketik pesan lalu ENTER.", flush=True)
+        print("=" * 65, flush=True)
         try:
             while True:
                 msg = input("\n[MAC-HQ] > ")
@@ -106,13 +105,14 @@ class MacTacticalTerminal:
         except KeyboardInterrupt:
             pass
         finally:
+            self.running = False
             self.cmd("iio_attr -c cf-ad9361-dds-core-lpc altvoltage0 raw 0")
             os.close(self.fd)
-            print("\n[MAC] Chat session closed.")
+            print("\n[MAC] Chat session closed.", flush=True)
 
 
 class Pi5TacticalTerminal:
-    """Controls Pi 5 Pluto+ SDR for receiving and replying to text messages."""
+    """Controls Pi 5 Pluto+ SDR for bidirectional text communication."""
 
     def __init__(self):
         import iio
@@ -121,6 +121,7 @@ class Pi5TacticalTerminal:
         self.phy = self.ctx.find_device("ad9361-phy")
         self.rx_dev = self.ctx.find_device("cf-ad9361-lpc")
         self.tx_dev = self.ctx.find_device("cf-ad9361-dds-core-lpc")
+        self.running = True
 
         # Set 915 MHz static frequency
         self.phy.find_channel("altvoltage1", True).attrs["frequency"].value = str(CARRIER_FREQ)
@@ -130,31 +131,63 @@ class Pi5TacticalTerminal:
         self.rx_dev.channels[0].enabled = True
         self.rx_dev.channels[1].enabled = True
         self.buf = iio.Buffer(self.rx_dev, 4096, False)
-        print(f"[PI5] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Listening for incoming RF signals...", flush=True)
 
-    def listen_and_chat(self):
-        print("=" * 65, flush=True)
-        print(" TACTICAL TERMINAL CHAT (NODE B: RASPBERRY PI 5)", flush=True)
-        print(" Listening on 915.000 MHz. Waiting for RF signals from Mac...", flush=True)
-        print("=" * 65, flush=True)
-        try:
-            while True:
-                # Capture baseband samples
+        # Setup Tx channel
+        self.tx_ch = self.tx_dev.find_channel("altvoltage0", True)
+        self.tx_ch.attrs["frequency"].value = "50000"
+        self.tx_ch.attrs["scale"].value = "0.9"
+        self.tx_ch.attrs["raw"].value = "0"
+
+        print(f"[PI5] Radio locked at {CARRIER_FREQ / 1e6:.3f} MHz. Siaga di frekuensi 915 MHz...", flush=True)
+
+    def send_reply(self, text: str):
+        print(f"\n[TX-PI5] Memancarkan balasan '{text}' ke Mac (915 MHz)...", end="", flush=True)
+        self.tx_ch.attrs["raw"].value = "1"
+        time.sleep(1.0)
+        self.tx_ch.attrs["raw"].value = "0"
+        print(f" [OK: TERKIRIM KE MAC]\n[PI5-NODE] > ", end="", flush=True)
+
+    def _rx_worker(self):
+        while self.running:
+            try:
                 self.buf.refill()
                 raw = self.buf.read()
                 samples = struct.unpack(f"<{len(raw)//2}h", raw)
                 rms = math.sqrt(sum(s*s for s in samples) / len(samples))
 
-                # If RF energy significantly exceeds noise floor
                 if rms > 20.0:
                     ts = datetime.now().strftime("%H:%M:%S")
                     print(f"\n[{ts}] [OVER-THE-AIR] >>> RF Sinyal Diterima dari Mac! <<<", flush=True)
                     print(f"     Frekuensi: 915.000 MHz | RMS Power: {rms:.1f} ADC counts | Peak: {max(samples)}", flush=True)
                     print(f"     Kekuatan Sinyal: SANGAT KUAT (+35 dB di atas noise)", flush=True)
-                    time.sleep(1.2)  # Cooldown to avoid duplicate spam
+                    print(f"[PI5-NODE] > ", end="", flush=True)
+                    time.sleep(1.2)
+            except Exception:
+                pass
+            time.sleep(0.02)
 
-                time.sleep(0.02)
+    def listen_and_chat(self):
+        import threading
+        print("=" * 65, flush=True)
+        print(" TACTICAL TERMINAL CHAT (NODE B: RASPBERRY PI 5)", flush=True)
+        print(" Mendengarkan 915.000 MHz. Ketik pesan untuk membalas ke Mac.", flush=True)
+        print("=" * 65, flush=True)
+
+        rx_thread = threading.Thread(target=self._rx_worker, daemon=True)
+        rx_thread.start()
+
+        try:
+            while True:
+                msg = input("[PI5-NODE] > ")
+                if msg.strip().lower() == "exit":
+                    break
+                if msg.strip():
+                    self.send_reply(msg.strip())
         except KeyboardInterrupt:
+            pass
+        finally:
+            self.running = False
+            self.tx_ch.attrs["raw"].value = "0"
             print("\n[PI5] Chat session closed.", flush=True)
 
 
