@@ -1,0 +1,69 @@
+==============================================================================
+ TACTICAL SDR MESH (TSM-Net SG) - HARDWARE DIAGNOSTICS & TEST REPORT
+ Timestamp:   2026-09-14 21:59:17
+ Platform:    Raspberry Pi 5 (Debian 12 Bookworm 64-bit)
+ Transceiver: Pluto+ SDR (ADALM-PLUTO Rev.C / AD9361 PHY)
+ Config:      Static Frequency Baseline (915.000 MHz)
+==============================================================================
+
+[TEST 1/8] Verifying Linux Kernel MANET & Virtual TAP Interfaces...
+  * Kernel Module 'batman-adv':  LOADED
+  * TAP Interface 'tap-radio':   ACTIVE
+  * Mesh Interface 'bat0':       ACTIVE
+  * 'tap-radio' Clamped MTU:     180 bytes
+  * 'bat0' Clamped MTU:          180 bytes
+  >>> TEST 1 RESULT: [PASS] Kernel networking & TAP device fully operational.
+
+[TEST 2/8] Scanning IIO Context & Pluto+ SDR Hardware Enumeration...
+  * Successfully attached to IIO Context: 'usb:1.3.5'
+  * Hardware Description: Linux (none) 5.4.0-gb05d16429dac-dirty #1 SMP PREEMPT Tue Jan 9 06:02:08 CST 2024 armv7l
+  * Model Attribute:      Analog Devices PlutoSDR Rev.C (Z7010-AD9361)
+  * Serial Number:        1040004cfa14000a170025006a0d48cb81
+  * Firmware Version:     v0.33-3-gd382-dirty
+  * AD9361 Model:         ad9361
+  * XO Correction:        40000000 Hz
+  >>> TEST 2 RESULT: [PASS] Pluto+ SDR transceiver discovered and enumerated.
+
+[TEST 3/8] Reading Pluto+ Internal Hardware Telemetry (XADC)...
+  * Zynq-7010 Core Temperature: 59.9 °C (Operating range: -40 to +85 °C)
+  * Internal VccInt Rail:        0.98 V (Nominal: 1.00V ± 5%)
+  >>> TEST 3 RESULT: [PASS] Thermal and electrical operating telemetry nominal.
+
+[TEST 4/8] Locking Pluto+ Local Oscillators (LO) to 915.000 MHz...
+  * Target LO Frequency:      915.000 MHz
+  * Actual TX_LO Synthesized: 915.000 MHz (Delta: +0 Hz)
+  * Actual RX_LO Synthesized: 915.000 MHz (Delta: +0 Hz)
+  >>> TEST 4 RESULT: [PASS] Both TX_LO and RX_LO successfully locked to 915.000 MHz.
+
+[TEST 5/8] Configuring Baseband Sample Rate & Filter Bandwidth...
+  * Configured Rx Sample Rate: 2.50 MSps (Target: 2.5 MSps)
+  * Configured Rx Analog BW:   1.00 MHz (Target: 1.0 MHz)
+  >>> TEST 5 RESULT: [PASS] Baseband sample rate & filter bandwidth locked.
+
+[TEST 6/8] Testing RF Gain Controls & Live Channel Energy (RSSI)...
+  * Rx Gain Control Mode: manual
+  * Rx Hardware Gain:     55.000000 dB dB
+  * Tx Hardware Gain:     -10.000000 dB dB
+  * Current 915 MHz RSSI: 105.00 dB dB
+  >>> TEST 6 RESULT: [PASS] RF Gain registers verified and live RSSI responding.
+
+[TEST 7/8] Testing Real-Time I/Q DMA Buffer Capture from Pluto+...
+  * DMA Stream Buffer Size:   4096 complex samples (16,384 bytes)
+  * Ingested Buffers:         3 consecutive DMA refills
+  * Average Baseband RMS:     8.1 ADC counts
+  * Peak ADC Amplitude:       5 counts (16-bit max: 32767)
+  >>> TEST 7 RESULT: [PASS] Real-time baseband RF samples successfully streaming via DMA.
+
+[TEST 8/8] Testing Non-Blocking TAP Read/Write Latency...
+  * Injected Layer-2 Frame:   31 bytes into 'tap-radio'
+  * TAP Write Latency:        0.037 ms (sub-millisecond)
+  >>> TEST 8 RESULT: [PASS] Kernel TAP device non-blocking I/O verified.
+
+==============================================================================
+ HARDWARE DIAGNOSTICS & VERIFICATION SUMMARY
+==============================================================================
+ Tests Passed:        8 / 8 (100.0%)
+ Transceiver Status:  ONLINE & LOCKED at 915.000 MHz
+ Kernel MANET Status: ACTIVE (batman-adv on tap-radio -> bat0)
+ Complete Log File:   /home/raspi5/mesh-tactic/hardware_test.log
+==============================================================================
