@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package tsm.v1;
+
+// =============================================================================
+// Tactical Node & MANET Diagnostic Service
+// =============================================================================
+service TacticalNodeService {
+  // Queries basic host identity, mesh IP, MAC address, and system metrics
+  rpc GetNodeInfo(NodeInfoRequest) returns (NodeInfoResponse);
+
+  // Queries B.A.T.M.A.N.-adv active neighbors and routing originators
+  rpc GetMeshNeighbors(MeshNeighborsRequest) returns (MeshNeighborsResponse);
+
+  // Queries physical SDR LO frequency, gains, RSSI, and FPGA XADC telemetry
+  rpc GetSDRTelemetry(SDRTelemetryRequest) returns (SDRTelemetryResponse);
+
+  // Queries Orchestrator frame counters (TX, RX, CRC errors, Echo drops)
+  rpc GetOrchestratorStats(OrchestratorStatsRequest) returns (OrchestratorStatsResponse);
+
+  // Executes an ICMP ping diagnostic across the bat0 mesh interface
+  rpc ExecutePing(PingRequest) returns (PingResponse);
+}
+
+// =============================================================================
+// Tactical Messaging & Chat Service
+// =============================================================================
+service TacticalChatService {
+  // Sends a text message to a specific peer or broadcast over bat0 UDP 9999
+  rpc SendMessage(ChatMessageRequest) returns (ChatMessageResponse);
+
+  // Server-streaming RPC yielding incoming messages over the mesh in real time
+  rpc StreamMessages(StreamMessagesRequest) returns (stream ChatMessage);
+
+  // Returns the recent buffered chat history
+  rpc GetMessageHistory(MessageHistoryRequest) returns (MessageHistoryResponse);
+}
+
+// =============================================================================
+// RF Spectrum & Waterfall Service
+// =============================================================================
+service TacticalSpectrumService {
+  // Single-shot RF spectrum scan
+  rpc GetSpectrumScan(SpectrumRequest) returns (SpectrumResponse);
+
+  // Server-streaming real-time RF spectrum scans (256-bin FFT power data)
+  rpc StreamSpectrum(StreamSpectrumRequest) returns (stream SpectrumScan);
+}
+
+// -----------------------------------------------------------------------------
+// Messages: TacticalNodeService
+// -----------------------------------------------------------------------------
+message NodeInfoRequest {}
+
+message NodeInfoResponse {
+  string hostname = 1;
+  string node_id = 2;          // e.g. "HQ-PI5" or "OUTPOST-PI2W"
+  string mesh_ip = 3;          // e.g. "10.10.0.1"
+  string tap_mac = 4;          // e.g. "76:ca:9c:33:35:a7"
+  int32 tap_mtu = 5;           // e.g. 180
+  double uptime_sec = 6;
+  int64 mem_used_bytes = 7;
+  int64 mem_total_bytes = 8;
+  double cpu_percent = 9;
+  string batman_version = 10;
+  bool is_mesh_active = 11;
+}
+
+message MeshNeighborsRequest {}
+
+message MeshNeighbor {
+  string mac_address = 1;
+  string interface = 2;        // e.g. "tap-radio"
+  double last_seen_sec = 3;
+  int32 tq_metric = 4;         // 0 to 255 (Transmission Quality in BATMAN IV)
+  bool is_nexthop = 5;
+  string outgoing_interface = 6;
+}
+
+message MeshNeighborsResponse {
+  repeated MeshNeighbor neighbors = 1;
+  int32 total_neighbors = 2;
+}
+
+message SDRTelemetryRequest {}
+
+message SDRTelemetryResponse {
+  bool sdr_connected = 1;
+  string sdr_uri = 2;          // e.g. "usb:1.3.5" or "peer"
+  int64 center_freq_hz = 3;    // e.g. 915000000
+  int64 sample_rate_sps = 4;   // e.g. 2500000
+  int64 rf_bandwidth_hz = 5;   // e.g. 1000000
+  double rx_gain_db = 6;
+  double tx_atten_db = 7;
+  double live_rssi_db = 8;
+  double fpga_temp_c = 9;
+  double vccint_v = 10;
+  bool is_lo_locked = 11;
+}
+
+message OrchestratorStatsRequest {}
+
+message OrchestratorStatsResponse {
+  int64 tx_frames = 1;
+  int64 rx_frames = 2;
+  int64 crc_drops = 3;
+  int64 echo_drops = 4;
+}
+
+message PingRequest {
+  string target_ip = 1;        // e.g. "10.10.0.2"
+  int32 count = 2;             // default 3
+  double timeout_sec = 3;      // default 1.0
+}
+
+message PingResponse {
+  string target_ip = 1;
+  int32 packets_sent = 2;
+  int32 packets_recv = 3;
+  double packet_loss_pct = 4;
+  double rtt_min_ms = 5;
+  double rtt_avg_ms = 6;
+  double rtt_max_ms = 7;
+  bool is_success = 8;
+}
+
+// -----------------------------------------------------------------------------
+// Messages: TacticalChatService
+// -----------------------------------------------------------------------------
+message ChatMessage {
+  string message_id = 1;
+  double timestamp = 2;
+  string sender_callsign = 3;  // e.g. "HQ-PI5"
+  string sender_ip = 4;        // e.g. "10.10.0.1"
+  string target_ip = 5;        // e.g. "10.10.0.2" or "255.255.255.255"
+  string text = 6;
+}
+
+message ChatMessageRequest {
+  string target_ip = 1;
+  string text = 2;
+}
+
+message ChatMessageResponse {
+  string message_id = 1;
+  bool delivered = 2;
+  double timestamp = 3;
+}
+
+message StreamMessagesRequest {}
+
+message MessageHistoryRequest {
+  int32 limit = 1;             // default 50
+}
+
+message MessageHistoryResponse {
+  repeated ChatMessage messages = 1;
+}
+
+// -----------------------------------------------------------------------------
+// Messages: TacticalSpectrumService
+// -----------------------------------------------------------------------------
+message SpectrumRequest {}
+
+message SpectrumScan {
+  double timestamp = 1;
+  int64 center_freq_hz = 2;    // 915000000
+  int64 span_hz = 3;           // 1000000 (1.0 MHz span)
+  int32 num_bins = 4;          // 256
+  bytes powers_uint8 = 5;      // 256 bytes normalized [0..255] for -105 dBm to 0 dBm
+  double peak_freq_hz = 6;
+  double peak_power_dbm = 7;
+}
+
+message SpectrumResponse {
+  SpectrumScan scan = 1;
+}
+
+message StreamSpectrumRequest {
+  int32 target_fps = 1;        // desired rate: 2, 5, or 10 fps
+}

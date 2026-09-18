@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tsm-mesh"
+version = "1.0.0"
+description = "Tactical SDR Mesh Network (TSM-Net SG) over Continuous I/Q Baseband"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "TSM-Net SG Engineering" }
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+tsm-node = "tsm.network.orchestrator:main"
+tsm-modem = "tsm.modem.sdr_driver:main"
+tsm-chat = "tsm.apps.chat:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,205 +1,153 @@
-# Tactical SDR Mesh Network (TSM-Net SG) - Baseline Node
+# Tactical SDR Mesh Network (TSM-Net SG)
 
-Baseline decentralized tactical IP Mobile Ad-hoc Network (MANET) bridging Linux kernel-level mesh routing (`batman-adv`) with an SDR-based LoRa physical layer (`gr-lora_sdr`) on a **Raspberry Pi 5** using a **Pluto+ SDR** transceiver locked to a **single static frequency** (e.g. 915 MHz).
+Enterprise-grade decentralized tactical IP Mobile Ad-hoc Network (MANET) bridging Linux kernel-level mesh routing (`batman-adv`) with an SDR continuous digital baseband I/Q modem (`ADALM-PLUTO` / `Pluto+ SDR`) locked to a static ISM frequency (**915.000 MHz**).
 
 Engineered following the **[DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail)** philosophy:
-- **Pragmatic & Zero-Bloat**: Uses Python standard library (`fcntl`, `os`, `struct`, `select`, `socket`) to interface directly with the Linux kernel `/dev/net/tun` interface. No flaky, unmaintained third-party TUN wrappers.
-- **Clean Decoupling**: High-speed GNU Radio C++ DSP is decoupled from the Linux network event loop via localhost loopback Socket PDUs.
-- **Strict MTU Clamping**: Enforces link-level MTU (180 bytes) and 8-byte framing with CRC-16 integrity verification to respect the 255-byte LoRa physical frame boundary.
+- **Zero-Bloat & Modular**: Pure Python standard library + NumPy. No heavy runtime dependencies on resource-constrained tactical nodes (e.g. Raspberry Pi Zero 2 W).
+- **Clean Decoupling**: Pure DSP algorithms (modulation, decimation, discriminator, CFO correction, auto-polarity) are completely separated from hardware I/O for 100% automated testability.
+- **Strict MTU Clamping**: Enforces link-level MTU (180 bytes) and 8-byte framing with CRC-16-CCITT integrity verification.
+- **Resilient & Anti-Echo**: Auto-detects local TAP MAC to drop self-transmissions and handles spectral inversion (IQ swap) automatically.
 
 ---
 
-## Architecture
+## Architecture & Directory Layout
 
 ```
- ┌─────────────────────────────────────────────────────────┐
- │   Tactical Applications / User Traffic (e.g. ATAK, IP)   │
- └────────────────────────────┬────────────────────────────┘
-                              │
- ┌────────────────────────────▼────────────────────────────┐
- │      Linux Kernel Mesh: batman-adv (Interface: bat0)    │
- └────────────────────────────┬────────────────────────────┘
-                              │ Layer 2 Ethernet Frames
- ┌────────────────────────────▼────────────────────────────┐
- │       Linux Virtual TAP Device: tap-radio (IFF_TAP)     │
- └────────────────────────────┬────────────────────────────┘
-                              │ Non-blocking raw frame I/O (fcntl)
- ┌────────────────────────────▼────────────────────────────┐
- │      tsm_mesh_orchestrator.py (Network Ingestor)        │
- │  - Reads Ethernet frames from tap-radio                 │
- │  - Packs Tactical Framing [MAGIC | SEQ | LEN | CRC16]   │
- └─────────────────────┬───────────────────▲───────────────┘
-     UDP 127.0.0.1:52001│                   │UDP 127.0.0.1:52002
- ┌─────────────────────▼───────────────────┴───────────────┐
- │      gr_lora_pluto_bridge.py (GNU Radio 3.10 Flowgraph) │
- │   - Tx Chain: PDU -> lora_sdr.modulate -> Pluto Sink    │
- │   - Rx Chain: Pluto Source -> lora_sdr.frame_sync/decode│
- └─────────────────────┬───────────────────▲───────────────┘
-          Baseband I/Q │                   │Baseband I/Q
- ┌─────────────────────▼───────────────────┴───────────────┐
- │        Pluto+ SDR (AD9363/4) via LibIIO (USB / GbE)     │
- │        Fixed Static Frequency: 915.0 MHz (No Hopping)   │
- └─────────────────────────────────────────────────────────┘
+mesh-tactic/
+├── config/                      # Centralized Configuration
+│   └── config.yaml              # Active node configuration
+├── docs/                        # Architecture & Verification Documentation
+│   ├── Tactical_SDR_Mesh_PRD.md # Product Requirements Document
+│   └── TACTICAL_MESH_VERIFICATION_REPORT.md # 5-Tier Over-the-air verification report
+├── scripts/                     # Shell & Deployment Scripts
+│   ├── run_node.sh              # Single-command node runner
+│   └── setup_batman.sh          # Kernel MANET (batman-adv) & TAP setup
+├── src/                         # Core Modular Python Package (`tsm`)
+│   └── tsm/
+│       ├── common/              # Shared Protocols & Config Loader
+│       │   ├── config.py        # Typed configuration models with YAML fallback
+│       │   └── framing.py       # Tactical framing (0xD354) & CRC16-CCITT
+│       ├── modem/               # Physical Layer SDR & Baseband DSP
+│       │   ├── constants.py     # RF parameters (915 MHz, 2.5 MSps, 50 kbps)
+│       │   ├── dsp.py           # Pure 2-FSK DSP algorithms (mod/demod/CFO)
+│       │   └── sdr_driver.py    # ADALM-PLUTO IIO hardware streaming interface
+│       ├── network/             # Linux Network & Layer-2/3 Routing
+│       │   ├── tap_bridge.py    # Native Linux /dev/net/tun TAP interface
+│       │   └── orchestrator.py  # TAP <-> Modem IPC bridge & loopback filter
+│       └── apps/                # Tactical User Applications
+│           └── chat.py          # Interactive terminal chat over bat0
+├── tests/                       # Automated Test Suites
+│   ├── conftest.py              # Pytest configuration
+│   ├── test_dsp.py              # Unit tests for 2-FSK DSP & CFO tolerance
+│   ├── test_framing.py          # Unit tests for framing and CRC16
+│   ├── test_config.py           # Unit tests for configuration loader
+│   ├── test_batman_pipeline.py  # Integration test: Kernel TAP <-> loopback
+│   ├── test_hardware.py         # Direct Pluto IIO hardware detection
+│   ├── test_ota_fsk.py          # Over-the-air RF verification
+│   └── test_rf_link.py          # End-to-end multi-node RF test harness
+├── tools/                       # Simulation & Legacy Utilities
+│   ├── simulate_mesh.py         # Multi-node mesh simulator
+│   ├── gr_lora_pluto_bridge.py  # Alternative GNU Radio LoRa bridge
+│   └── tactical_chat_legacy.py  # Legacy serial communicator prototype
+│
+# Root Backward-Compatibility Entrypoints:
+├── run_node.sh                  # Wrapper -> scripts/run_node.sh
+├── setup_batman.sh              # Wrapper -> scripts/setup_batman.sh
+├── sdr_rf_modem.py              # Wrapper -> tsm.modem.sdr_driver
+├── tsm_mesh_orchestrator.py     # Wrapper -> tsm.network.orchestrator
+├── mesh_chat.py                 # Wrapper -> tsm.apps.chat
+└── pyproject.toml               # Modern Python build metadata
 ```
 
 ---
 
-## 1. Prerequisites & Dependencies (Raspberry Pi 5)
+## Quick Start Guide
 
-Run these steps on **Raspberry Pi OS 64-bit (Debian 12 Bookworm)**.
+### 1. Requirements & Installation
 
-### Step 1.1: System Packages & Kernel Routing
+On Raspberry Pi OS (64-bit Debian Bookworm):
 ```bash
 sudo apt update
-sudo apt install -y \
-    batctl \
-    batman-adv \
-    libiio-utils \
-    gnuradio \
-    gnuradio-dev \
-    cmake \
-    git \
-    build-essential \
-    python3-pip \
-    python3-yaml \
-    python3-pyroute2
+sudo apt install -y batctl libiio-utils python3-libiio python3-numpy python3-yaml
 ```
 
-### Step 1.2: Build & Install `gr-lora_sdr`
-Compile the LoRa SDR GNU Radio Out-of-Tree (OOT) module:
+Clone the repository and install in editable mode:
 ```bash
-cd ~
-git clone https://github.com/tapparelj/gr-lora_sdr.git
-cd gr-lora_sdr
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-sudo make install
-sudo ldconfig
-```
-
-### Step 1.3: Verify Pluto+ SDR Detection
-Connect the Pluto+ SDR to the Raspberry Pi 5 via USB or Ethernet. Verify libiio detection:
-```bash
-# For default USB RNDIS interface:
-iio_info -u ip:192.168.2.1
-
-# Verify Local Oscillator (LO) frequency control is accessible:
-iio_attr -u ip:192.168.2.1 -c adi,ad9361-phy altvoltage0 frequency
+git clone https://github.com/mm/mesh-tactic.git
+cd mesh-tactic
+pip3 install -e .
 ```
 
 ---
 
-## 2. Kernel Mesh Setup (`setup_batman.sh`)
+### 2. Running a Node
 
-Before starting the radio bridge, initialize `batman-adv` and the clamped TAP interface:
-
+#### Node 1 (Command Post / Raspberry Pi 5):
 ```bash
-# Make executable
-chmod +x setup_batman.sh
-
-# On Node 1:
-sudo ./setup_batman.sh 10.10.0.1/24
-
-# On Node 2:
-sudo ./setup_batman.sh 10.10.0.2/24
+sudo ./run_node.sh 10.10.0.1/24
 ```
 
-This script:
-1. Loads `batman-adv` and sets routing algorithm to `BATMAN_IV`.
-2. Creates the persistent Layer-2 TAP device `tap-radio` with MTU **180 bytes**.
-3. Enslaves `tap-radio` into `bat0`.
-4. Activates `bat0` with the specified node IP address.
+#### Node 2 (Tactical Outpost / Raspberry Pi Zero 2 W):
+```bash
+sudo ./run_node.sh 10.10.0.2/24
+```
+
+This single command automatically:
+1. Loads `batman-adv` kernel module and creates `tap-radio` with MTU clamped to 180 bytes.
+2. Enslaves `tap-radio` into `bat0` and assigns the tactical mesh IP.
+3. Launches the continuous 2-FSK baseband modem at 915.000 MHz.
+4. Starts the orchestrator bridging kernel packets into RF frames.
 
 ---
 
-## 3. Running the Mesh Node
+### 3. Interactive Tactical Chat
 
-### Step 3.1: Start the GNU Radio Physical Bridge
-Launches the GNU Radio flowgraph, locks Pluto+ to the static frequency (915.0 MHz), and listens on loopback UDP Socket PDUs:
-```bash
-python3 gr_lora_pluto_bridge.py --config config.yaml
-```
+Open a new terminal on each node and launch the chat application:
 
-### Step 3.2: Start the Mesh Orchestrator
-In a separate terminal or tmux window, launch the network orchestrator:
-```bash
-sudo python3 tsm_mesh_orchestrator.py --config config.yaml
-```
+* **On Pi 5:**
+  ```bash
+  python3 mesh_chat.py --node pi5
+  ```
 
-*(Optional Dry-Run Test without SDR hardware)*:
-```bash
-sudo python3 tsm_mesh_orchestrator.py --config config.yaml --dry-run
-```
+* **On Pi 2W:**
+  ```bash
+  python3 mesh_chat.py --node pi2w
+  ```
+
+Type a message and press **[ENTER]**. The text is packetized into IP/UDP datagrams over `bat0`, modulated into 915.000 MHz I/Q baseband, radiated into the air, and displayed on the remote terminal.
 
 ---
 
----
+### 4. Running Automated Tests
 
-## 4. Automated Verification & Testing Suites
-
-TSM-Net SG includes 4 comprehensive automated test suites to validate each tier of the tactical stack:
-
-### Suite 1: Mathematical Multi-Hop Simulation (`simulate_mesh.py`)
-Run on any host (Mac/Linux) without SDR hardware to test fragmentation, framing, and routing failover:
+Run the pure DSP and framing test suite offline (no SDR hardware required):
 ```bash
-python3 simulate_mesh.py
+python3 -m unittest tests/test_framing.py tests/test_dsp.py tests/test_config.py
 ```
-*Result: 5/5 scenarios passed (100% frame delivery, 0 CRC errors).*
 
-### Suite 2: Physical Hardware Diagnostics (`test_hardware.py`)
-Run on Raspberry Pi 5 with Pluto+ SDR connected via USB:
-```bash
-sudo python3 test_hardware.py --uri usb:1.3.5
-```
-*Result: 8/8 tests passed (XADC core temp: 58.2°C, LO lock: 915.000 MHz with 0 Hz delta, DMA capture: 16 KB buffers, TAP latency: 0.027 ms). Output saved to `hardware_test.log`.*
-
-### Suite 3: Over-The-Air (OTA) RF Link Test (`test_rf_link.py`)
-Tests real-time bi-directional 915.000 MHz RF power transfer between Mac Laptop Pluto and Pi 5 Pluto+:
-```bash
-python3 test_rf_link.py
-```
-*Result: Verified over-the-air link with **+37.22 dB SNR** (72.6x baseband voltage increase over noise floor). Output saved to `rf_link_test.log`.*
-
-### Suite 4: BATMAN-adv Layer-2 MANET Pipeline Test (`test_batman_pipeline.py`)
-Run on Raspberry Pi 5 to verify kernel mesh routing and TAP descriptor integration:
-```bash
-sudo python3 test_batman_pipeline.py
-```
-*Result: 8/8 tests passed (BATMAN_IV routing algorithm, MTU 180 clamping, 0xD354 tactical framing, bit-flip CRC rejection, TAP write latency: 0.033 ms). Output saved to `batman_test.log`.*
-
-### Complete Report
-For full telemetry and register logs, see [TACTICAL_MESH_VERIFICATION_REPORT.md](TACTICAL_MESH_VERIFICATION_REPORT.md).
+All 14 unit tests will execute in under 0.1 seconds, verifying:
+- 16-bit CRC-CCITT deterministic integrity & single-bit flip detection.
+- Frame sequence incrementation, magic validation (`0xD354`), and fragmentation.
+- Pure 2-FSK modulation waveform synthesis and 16-bit DAC boundary clamping.
+- End-to-end demodulation accuracy with **Carrier Frequency Offset (CFO $\pm 15$ kHz)**.
+- Automatic spectral polarity detection (IQ swap between Pluto and Pluto+).
+- False-positive noise rejection on pure Gaussian noise.
 
 ---
 
-## 5. Over-The-Air Tactical Chat Communicator (`tactical_chat.py`)
+### 5. Inspecting Link Telemetry
 
-To run real-time tactical messaging directly over the 915.000 MHz RF link without network cables or internet:
+* **View mesh neighbors:**
+  ```bash
+  sudo batctl n
+  ```
 
-**On Raspberry Pi 5 (Node B)**:
-```bash
-sudo python3 tactical_chat.py --node pi5
-```
+* **View routing table:**
+  ```bash
+  sudo batctl o
+  ```
 
-**On Laptop Mac (Node A)**:
-```bash
-python3 tactical_chat.py --node mac
-```
-
-Type any tactical sitrep (e.g. `STATUS ALPHA GREEN`) and press **Enter** to radiate the message across the room at 915.000 MHz!
-
----
-
-## Configuration Reference (`config.yaml`)
-
-| Key | Default | Description |
-| :--- | :--- | :--- |
-| `sdr.center_freq` | `915000000` | Static carrier frequency in Hz (915 MHz ISM) |
-| `sdr.sample_rate` | `1000000` | 1 MSps baseband sampling rate |
-| `sdr.tx_gain` | `-10` | Output attenuation in dB (0 dB is max power) |
-| `sdr.rx_gain` | `55` | Receiver RF amplification in dB |
-| `lora.spreading_factor` | `7` | LoRa Spreading Factor (SF7 = lowest latency) |
-| `lora.bandwidth` | `125000` | Modulation bandwidth (125 kHz) |
-| `lora.sync_word` | `0x12` | Private tactical mesh sync word |
-| `network.mtu` | `180` | Link MTU clamped to fit LoRa physical payload |
+* **Monitor live packet bridging:**
+  ```bash
+  tail -f orch.log
+  ```

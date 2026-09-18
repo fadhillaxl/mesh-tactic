@@ -217,18 +217,74 @@ Executed directly on **Raspberry Pi 5 (`raspi5.local`)** verifying the Layer-2 M
 
 ---
 
+## Tier 5: Continuous 2-FSK Digital Baseband I/Q RF Modem (`sdr_rf_modem.py`)
+
+Executed directly over the physical RF channel between **Node 1 (Raspberry Pi 5 + Pluto+ SDR via `usb:1.3.5`)** and **Node 2 (Raspberry Pi Zero 2 W + Pluto SDR via `ip:192.168.99.240:30431`)**:
+
+### 1. Baseband DSP & RF Physical Parameters
+- **RF Carrier Frequency**: `915.000 MHz` (Strictly Static ISM, 0 Hz frequency offset)
+- **Baseband Sampling Rate**: `2.50 MSps` (Oversampled 50x)
+- **Modulation Scheme**: Continuous-Phase 2-FSK (CPFSK)
+- **Baud Rate / Bitrate**: `50,000 Baud` (50 kbps)
+- **Frequency Deviation**: `±50.0 kHz` (Bit 1 = $+50\text{ kHz}$, Bit 0 = $-50\text{ kHz}$)
+- **Receiver Architecture**: 5x Decimation (`500 kSps`, `SPS=10`), Instantaneous Frequency Discriminator, DC Carrier Frequency Offset (CFO) Cancellation, and Sub-Millisecond Vectorized Sync Word Correlation (`0xD3549150`) with Auto-Polarity Spectral Inversion Detection.
+- **DMA Buffer Pipeline**: Fixed reusable 131,072-sample (128K samples) buffers for both Tx and Rx DMA channels.
+- **Self-Echo Suppression**: Local TAP MAC address filtering prevents self-transmission echo loops across the high-gain receiver.
+
+### 2. Physical Over-The-Air Verification Log
+
+```text
+==============================================================================
+ TACTICAL SDR MESH - BIDIRECTIONAL OVER-THE-AIR (OTA) VERIFICATION
+ Node 1 (Tactical Command): Raspberry Pi 5 | bat0: 10.10.0.1/24 | Pluto+ (usb:1.3.5)
+ Node 2 (Outpost Node):    Raspberry Pi 2W | bat0: 10.10.0.2/24 | Pluto (ip:192.168.99.240:30431)
+ Carrier Frequency:        915.000 MHz Static ISM Carrier
+==============================================================================
+
+[TEST 1/4] Over-The-Air 2-FSK Physical Packet Transmission (Pi 5 -> Pi 2W):
+  * Pi 5 DMA TX: Radiated 26B frame (24,400 samples, 9.8 ms burst) at 915.000 MHz
+  * Pi 2W DMA RX: [RF-RX] Over-The-Air Packet Decoded! (26 bytes | Sync Corr: 0.42 | CRC-16: VALID)
+  >>> RESULT: [PASS]
+
+[TEST 2/4] Over-The-Air 2-FSK Physical Packet Transmission (Pi 2W -> Pi 5):
+  * Pi 2W DMA TX: Radiated 28B frame (25,200 samples, 10.1 ms burst) at 915.000 MHz
+  * Pi 5 DMA RX: [RF-RX] Over-The-Air Packet Decoded! (28 bytes | Sync Corr: 0.42 | CRC-16: VALID)
+  >>> RESULT: [PASS]
+
+[TEST 3/4] B.A.T.M.A.N. MANET Over-The-Air Route Convergence:
+  * Pi 5 batctl n:  tap-radio  7a:77:06:18:9a:2d (Pi 2W)   last-seen 0.420s
+  * Pi 2W batctl n: tap-radio  1e:83:01:c2:99:69 (Pi 5)    last-seen 1.368s
+  * Pi 5 batctl tg: Client da:94:f7:1f:0c:1d Via 7a:77:06:18:9a:2d [ROUTED OVER RF]
+  * Pi 2W batctl tg: Client 22:3a:2a:bf:73:a1 Via 1e:83:01:c2:99:69 [ROUTED OVER RF]
+  >>> RESULT: [PASS]
+
+[TEST 4/4] End-to-End Over-The-Air Layer 3 IP Packet Delivery:
+  * Ingestion: 10.10.0.1 sends UDP payload -> bat0 -> tap-radio -> tsm_mesh_orchestrator
+  * Tactical Encapsulation: 0xD354 header + CRC-16 -> IPC 127.0.0.1:52001 -> sdr_rf_modem
+  * Physical Waveform: Modulated into 2-FSK I/Q at 915.000 MHz and radiated over the air
+  * Remote Ingestion: Pi 2W Pluto captures RF -> Demodulated -> IPC 127.0.0.1:52002 -> tap-radio -> bat0
+  * Output on Pi 2W:
+    *** SUCCESS! RECEIVED ON PI 2W VIA SDR MESH: TACTICAL_SDR_MESH_IP_PACKET_OVER_THE_AIR_SUCCESS FROM ('10.10.0.1', 40307) ***
+  * Output on Pi 5 (Reverse):
+    *** SUCCESS! RECEIVED ON PI 5 VIA SDR MESH: OUTPOST_NODE_2_REPORTING_TO_HQ_OVER_915MHZ_SDR FROM ('10.10.0.2', 39636) ***
+  >>> RESULT: [PASS]
+```
+
+---
+
 ## Log Artifacts Generated
 
 1. `hardware_test.log`: Full 8-test report for physical Pluto+ SDR on Raspberry Pi 5.
 2. `rf_link_test.log`: Over-the-air SNR and power telemetry log between Mac and Pi 5.
 3. `batman_test.log`: Full 8-test report for kernel `batman-adv`, `bat0`, `tap-radio`, and framing.
+4. `modem.log` & `orch.log`: Live execution logs on both Raspberry Pi 5 and Raspberry Pi Zero 2 W.
 
 ---
 
 ## Conclusion
 
 The Tactical SDR Mesh Network (TSM-Net SG) has been verified across all operational layers:
-1. **RF Physical Layer**: Transmitting and receiving coherent 915.000 MHz signals with +37 dB SNR.
-2. **Data Link Framing**: Clamping MTU to 180 bytes with zero packet fragmentation errors and 100% CRC-16 bit error detection.
-3. **Kernel Mesh Routing**: Active `batman-adv` (BATMAN_IV) kernel module routing Layer 2 Ethernet frames through `bat0` via `tap-radio`.
-4. **Code Quality**: Adheres strictly to the [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) standard (Python standard library only, zero unnecessary dependencies, native Linux kernel descriptors).
+1. **RF Physical Layer**: Transmitting and receiving coherent 915.000 MHz digital baseband I/Q waveforms with continuous 2-FSK modulation.
+2. **Data Link Framing**: Tactical `0xD354` encapsulation with sequence counter, fragmentation headers, and CRC-16 error checking.
+3. **Kernel Mesh Routing**: Active `batman-adv` (BATMAN_IV) kernel module dynamically discovering neighbors and converging translation tables over the air without internet or ZeroTier.
+4. **Zero-Bloat Philosophy**: Adheres strictly to the [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) standard (Native Python stdlib + NumPy only, avoiding heavy GNU Radio builds on 512MB RAM Pi Zero 2 W).
