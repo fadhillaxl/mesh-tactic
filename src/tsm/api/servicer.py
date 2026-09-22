@@ -285,11 +285,12 @@ class TacticalNodeServicer(tsm_pb2_grpc.TacticalNodeServiceServicer):
     def ExecutePing(self, request, context):
         target = request.target_ip.strip()
         count = request.count if request.count > 0 else 3
-        timeout = request.timeout_sec if request.timeout_sec > 0 else 1.5
+        timeout = request.timeout_sec if request.timeout_sec > 0 else 3.0
 
-        cmd = ["ping", "-c", str(count), "-W", str(int(timeout)), target]
+        # On half-duplex 50 kbps SDR, wait 3 seconds per packet (-W 3) and separate packets by 2s (-i 2)
+        cmd = ["ping", "-c", str(count), "-i", "2", "-W", str(max(3, int(timeout))), target]
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=count * timeout + 2)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=count * 3 + 5)
             out = res.stdout
 
             # Parse ping output
@@ -349,6 +350,7 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
 
         # UDP Sockets
         self.sock_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_tx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock_rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock_rx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -362,6 +364,7 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
         self.listener_thread.start()
 
     def _rx_loop(self):
+        last_seen = {}
         while self.running:
             try:
                 r_ready, _, _ = select.select([self.sock_rx], [], [], 0.2)
@@ -369,11 +372,21 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
                     data, addr = self.sock_rx.recvfrom(2048)
                     text = data.decode("utf-8", errors="replace")
                     sender_ip = addr[0]
+                    now = time.time()
+
+                    # Deduplicate burst transmissions within 1.5 seconds
+                    dedup_key = f"{sender_ip}:{text}"
+                    if dedup_key in last_seen and now - last_seen[dedup_key] < 1.5:
+                        continue
+                    last_seen[dedup_key] = now
+                    if len(last_seen) > 100:
+                        last_seen = {k: v for k, v in last_seen.items() if now - v < 5.0}
+
                     sender_callsign = get_callsign(sender_ip)
 
                     msg = tsm_pb2.ChatMessage(
                         message_id=str(uuid.uuid4())[:8],
-                        timestamp=time.time(),
+                        timestamp=now,
                         sender_callsign=sender_callsign,
                         sender_ip=sender_ip,
                         target_ip=get_local_mesh_ip(),
@@ -405,6 +418,9 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
         now = time.time()
 
         try:
+            self.sock_tx.sendto(text.encode("utf-8"), (target, self.port))
+            # Resend burst once after 80ms for half-duplex loss tolerance
+            time.sleep(0.08)
             self.sock_tx.sendto(text.encode("utf-8"), (target, self.port))
             delivered = True
         except Exception as e:

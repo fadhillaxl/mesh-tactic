@@ -29,9 +29,11 @@ echo "============================================================"
 echo "[1/6] Loading batman-adv kernel module..."
 modprobe batman-adv
 
-# 2. Configure B.A.T.M.A.N. routing algorithm (BATMAN_IV is standard and stable)
+# 2. Configure B.A.T.M.A.N. routing algorithm & SDR orig_interval
 if command -v batctl &> /dev/null; then
     batctl ra BATMAN_IV || true
+    # 3000ms interval avoids flooding half-duplex 50 kbps SDR channels with OGMs
+    batctl it 3000 2>/dev/null || true
 else
     echo "[ERROR] 'batctl' utility not found. Install it via: sudo apt install batctl" >&2
     exit 1
