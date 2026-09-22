@@ -12,6 +12,8 @@ export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH:-}"
 
 GRPC_PORT="${GRPC_PORT:-50051}"
 HTTP_PORT="${HTTP_PORT:-8080}"
+SDR_URI="${SDR_URI:-usb:1.3.5}"
+
 # Parse optional arguments to override defaults
 ARGS=()
 while [[ $# -gt 0 ]]; do
