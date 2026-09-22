@@ -48,6 +48,7 @@ from tsm.modem.mac import (
     MACMode,
     TacticalMAC,
 )
+from tsm.config import AppConfig, CONFIG
 
 try:
     import iio
@@ -574,29 +575,90 @@ def get_default_uri() -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tactical SDR Point-to-Point Unicast & Multi-Hop Chat")
-    parser.add_argument("--id", type=lambda x: int(x, 0), default=None, help="My Node ID (e.g. 1, 2, 0x0001, 0x0002)")
-    parser.add_argument("--node", default="", help="Node alias ('mac'=1, 'pi5'=2, 'aml'=3)")
-    parser.add_argument("--uri", default="", help="Pluto SDR URI (e.g. usb:1.3.5 or ip:192.168.99.240)")
-    parser.add_argument("--to", type=lambda x: int(x, 0), default=BROADCAST_ID, help="Target Node ID (default: 0xFFFF Broadcast)")
-    parser.add_argument("--socket", action="store_true", help="Use UDP Socket PDU (for GNU Radio gr-lora_sdr) instead of direct Pluto SDR")
-    parser.add_argument("--tx-port", type=int, default=52001, help="UDP Egress port to SDR modulator (default: 52001)")
-    parser.add_argument("--rx-port", type=int, default=52002, help="UDP Ingest port from SDR demodulator (default: 52002)")
-    parser.add_argument("--host", default="127.0.0.1", help="Target SDR host IP (default: 127.0.0.1)")
-    parser.add_argument("--rx-gain", type=float, default=65.0, help="RX Gain dB (0-73)")
-    parser.add_argument("--tx-atten", type=float, default=0.0, help="TX Attenuation dB (-89 to 0)")
-    parser.add_argument("--no-relay", action="store_true", help="Disable multi-hop packet forwarding")
-    parser.add_argument("--mac", default="lbt", choices=["lbt", "slotted", "stdma", "off"], help="MAC anti-collision mode (default: lbt)")
+    cfg = AppConfig.load()
+    parser = argparse.ArgumentParser(
+        description="Tactical SDR Point-to-Point Unicast & Multi-Hop Chat (Configured via .env or CLI)"
+    )
+    parser.add_argument(
+        "--id",
+        type=lambda x: int(x, 0),
+        default=None,
+        help=f"My Node ID (default from .env: 0x{cfg.node_id:04X})",
+    )
+    parser.add_argument(
+        "--node",
+        default="",
+        help=f"Node alias ('mac'=1, 'pi5'=2, 'aml'=3) (default from .env: {cfg.node_alias})",
+    )
+    parser.add_argument(
+        "--uri",
+        default="",
+        help=f"Pluto SDR URI (default from .env: {cfg.sdr_uri})",
+    )
+    parser.add_argument(
+        "--to",
+        type=lambda x: int(x, 0),
+        default=None,
+        help=f"Target Node ID (default from .env: 0x{cfg.target_id:04X})",
+    )
+    parser.add_argument(
+        "--socket",
+        action="store_true",
+        default=None,
+        help="Use UDP Socket PDU instead of direct Pluto SDR",
+    )
+    parser.add_argument(
+        "--tx-port",
+        type=int,
+        default=cfg.socket_tx_port,
+        help=f"UDP Egress port to SDR modulator (default: {cfg.socket_tx_port})",
+    )
+    parser.add_argument(
+        "--rx-port",
+        type=int,
+        default=cfg.socket_rx_port,
+        help=f"UDP Ingest port from SDR demodulator (default: {cfg.socket_rx_port})",
+    )
+    parser.add_argument(
+        "--host",
+        default=cfg.socket_host,
+        help=f"Target SDR host IP (default: {cfg.socket_host})",
+    )
+    parser.add_argument(
+        "--rx-gain",
+        type=float,
+        default=cfg.rx_gain,
+        help=f"RX Gain dB (default: {cfg.rx_gain})",
+    )
+    parser.add_argument(
+        "--tx-atten",
+        type=float,
+        default=cfg.tx_atten,
+        help=f"TX Attenuation dB (default: {cfg.tx_atten})",
+    )
+    parser.add_argument(
+        "--no-relay",
+        action="store_true",
+        default=False,
+        help="Disable multi-hop packet forwarding",
+    )
+    parser.add_argument(
+        "--mac",
+        default=cfg.mac_mode,
+        choices=["lbt", "slotted", "stdma", "off"],
+        help=f"MAC anti-collision mode (default from .env: {cfg.mac_mode})",
+    )
     args = parser.parse_args()
 
-    node_str = (args.node or "").lower()
-    uri = args.uri
+    # Determine node_id and URI by merging CLI args, .env, and node aliases
+    node_str = (args.node or cfg.node_alias or "").lower()
     node_id = args.id
+    uri = args.uri
 
     if uri and ("usbmodem" in uri or "/dev/tty" in uri):
         uri = "ip:192.168.2.10"
 
-    # Auto-detect profile from node argument or hostname
+    # Profile alias resolution
     if node_str:
         if "mac" in node_str:
             node_id = node_id or 0x0001
@@ -607,33 +669,27 @@ def main():
         elif "aml" in node_str or "2w" in node_str or node_str in ("2", "node2"):
             node_id = node_id or 0x0003
             uri = uri or "ip:192.168.99.240"
-    else:
-        # Fallback detection from OS hostname
-        nodename = os.uname().nodename.lower()
-        if "pi5" in nodename:
-            node_id = node_id or 0x0002
-        elif "aml" in nodename or "2w" in nodename:
-            node_id = node_id or 0x0003
-        elif "darwin" in sys.platform.lower() or "mac" in nodename:
-            node_id = node_id or 0x0001
-        else:
-            node_id = node_id or 0x0001
 
-    if not uri and not args.socket:
-        uri = get_default_uri()
+    # Fallback to .env configuration
+    node_id = node_id if node_id is not None else cfg.node_id
+    uri = uri or cfg.sdr_uri
+    target_id = args.to if args.to is not None else cfg.target_id
+    use_socket = args.socket if args.socket is not None else cfg.use_socket
+    enable_relay = False if args.no_relay else cfg.enable_relay
+    mac_mode = args.mac or cfg.mac_mode
 
     chat = UnicastSDRChat(
         node_id=node_id,
-        target_id=args.to,
+        target_id=target_id,
         uri=uri,
-        use_socket=args.socket,
+        use_socket=use_socket,
         tx_port=args.tx_port,
         rx_port=args.rx_port,
         remote_host=args.host,
         rx_gain=args.rx_gain,
         tx_atten=args.tx_atten,
-        enable_relay=not args.no_relay,
-        mac_mode=args.mac,
+        enable_relay=enable_relay,
+        mac_mode=mac_mode,
     )
     chat.run_cli()
 

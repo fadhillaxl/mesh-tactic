@@ -37,6 +37,7 @@ from tsm.modem.dsp import (
     modulate_2fsk,
     demodulate_2fsk,
 )
+from tsm.config import AppConfig, CONFIG
 
 try:
     import iio
@@ -242,15 +243,16 @@ class DirectRFChat:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tactical SDR Direct RF Chat (915 MHz)")
-    parser.add_argument("--node", default="", help="Node name (e.g. pi5, aml, mac)")
-    parser.add_argument("--uri", default="", help="Pluto SDR URI (e.g. usb:1.3.5 or ip:192.168.99.240)")
-    parser.add_argument("--callsign", default="", help="Callsign (default: auto from hostname)")
-    parser.add_argument("--rx-gain", type=float, default=65.0, help="RX Gain dB (0-73)")
-    parser.add_argument("--tx-atten", type=float, default=0.0, help="TX Attenuation dB (-89 to 0)")
+    cfg = AppConfig.load()
+    parser = argparse.ArgumentParser(description="Tactical SDR Direct RF Chat (915 MHz, .env enabled)")
+    parser.add_argument("--node", default="", help=f"Node name (default from .env: {cfg.node_alias})")
+    parser.add_argument("--uri", default="", help=f"Pluto SDR URI (default from .env: {cfg.sdr_uri})")
+    parser.add_argument("--callsign", default="", help=f"Callsign (default from .env: {cfg.callsign})")
+    parser.add_argument("--rx-gain", type=float, default=cfg.rx_gain, help=f"RX Gain dB (default: {cfg.rx_gain})")
+    parser.add_argument("--tx-atten", type=float, default=cfg.tx_atten, help=f"TX Attenuation dB (default: {cfg.tx_atten})")
     args, _ = parser.parse_known_args()
 
-    node_str = (args.node or "").lower()
+    node_str = (args.node or cfg.node_alias or "").lower()
     uri = args.uri
     callsign = args.callsign
 
@@ -259,27 +261,19 @@ def main():
         uri = "ip:192.168.2.10"
 
     # Auto-detect node identity
-    if args.node:
+    if node_str:
         if "pi5" in node_str or node_str in ("1", "node1"):
-            if not uri:
-                uri = "usb:1.3.5"
-            if not callsign:
-                callsign = "HQ-PI5"
+            uri = uri or "usb:1.3.5"
+            callsign = callsign or "HQ-PI5"
         elif "2w" in node_str or "zero" in node_str or node_str in ("2", "node2") or "aml" in node_str:
-            if not uri:
-                uri = "ip:192.168.99.240"
-            if not callsign:
-                callsign = "OUTPOST-PI2W"
+            uri = uri or "ip:192.168.99.240"
+            callsign = callsign or "OUTPOST-PI2W"
         elif "mac" in node_str:
-            if not uri:
-                uri = "ip:192.168.2.10"
-            if not callsign:
-                callsign = "COMMANDER-MAC"
+            uri = uri or "ip:192.168.2.10"
+            callsign = callsign or "COMMANDER-MAC"
 
-    if not uri:
-        uri = get_default_uri()
-    if not callsign:
-        callsign = get_default_callsign()
+    uri = uri or cfg.sdr_uri
+    callsign = callsign or cfg.callsign
 
     if iio is None:
         print("[ERROR] libiio python binding is not available. Please install python3-libiio.", file=sys.stderr)
