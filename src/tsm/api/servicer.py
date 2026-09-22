@@ -26,8 +26,10 @@ MAX_HISTORY = 100
 
 def get_local_mesh_ip() -> str:
     """Reads local bat0 IP address or defaults."""
+    if not os.path.exists("/sys/class/net/bat0"):
+        return "10.10.0.1"
     try:
-        out = subprocess.check_output("ip -4 addr show bat0 | grep inet", shell=True).decode()
+        out = subprocess.check_output("ip -4 addr show bat0 2>/dev/null | grep inet", shell=True).decode()
         return out.strip().split()[1].split("/")[0]
     except Exception:
         return "10.10.0.1"
