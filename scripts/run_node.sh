@@ -17,12 +17,23 @@ fi
 NODE_IP="10.10.0.1/24"
 DRY_RUN=""
 PEER=""
+WITH_UI=""
+HTTP_PORT="8080"
+GRPC_PORT="50051"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)
             DRY_RUN="--dry-run"
             shift
+            ;;
+        --ui|--with-ui)
+            WITH_UI="1"
+            shift
+            ;;
+        --http-port)
+            HTTP_PORT="$2"
+            shift 2
             ;;
         --peer)
             PEER="$2"
@@ -69,6 +80,10 @@ bash "${SCRIPT_DIR}/setup_batman.sh" "${NODE_IP}"
 # Process cleanup handler on Ctrl+C / exit
 cleanup() {
     echo -e "\n[SHUTDOWN] Terminating tactical mesh processes..."
+    if [ -n "${UI_PID:-}" ] && kill -0 "${UI_PID}" 2>/dev/null; then
+        kill -SIGTERM "${UI_PID}" 2>/dev/null || true
+        wait "${UI_PID}" 2>/dev/null || true
+    fi
     if [ -n "${MODEM_PID:-}" ] && kill -0 "${MODEM_PID}" 2>/dev/null; then
         kill -SIGTERM "${MODEM_PID}" 2>/dev/null || true
         wait "${MODEM_PID}" 2>/dev/null || true
@@ -91,6 +106,17 @@ if [ -z "$DRY_RUN" ] && [ -z "$PEER" ]; then
     sleep 3
 elif [ -n "$PEER" ]; then
     echo -e "\n[STEP 2/3] Direct Peer Mode active (Target: ${PEER}). Skipping local SDR modem..."
+fi
+
+# 2.5 Optional Web UI & gRPC Micro-Server
+UI_PID=""
+if [ -n "$WITH_UI" ]; then
+    echo -e "\n[STEP 2.5] Starting Cyber-HUD Web Dashboard & gRPC Service (Port: ${HTTP_PORT})..."
+    python3 -m tsm.api.server --grpc-port "${GRPC_PORT}" --http-port "${HTTP_PORT}" --sdr-uri none &
+    UI_PID=$!
+    sleep 1
+    LOCAL_HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+    echo "[UI] Web Dashboard ready at: http://${LOCAL_HOST_IP}:${HTTP_PORT}"
 fi
 
 # 3. Start the Tactical Mesh Orchestrator
