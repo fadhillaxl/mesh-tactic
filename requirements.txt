@@ -3,3 +3,7 @@
 numpy>=1.20.0
 PyYAML>=6.0
 pytest>=7.0
+
+# Optional: Web HUD & gRPC Micro-Server
+grpcio>=1.40.0
+protobuf>=3.19.0

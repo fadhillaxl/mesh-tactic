@@ -430,7 +430,7 @@ def main():
     parser = argparse.ArgumentParser(description="Tactical SDR Mesh Unified gRPC & Web Server")
     parser.add_argument("--grpc-port", type=int, default=50051, help="gRPC server port (default: 50051)")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP/UI server port (default: 8080)")
-    parser.add_argument("--sdr-uri", type=str, default="usb:1.3.5", help="Pluto SDR URI")
+    parser.add_argument("--sdr-uri", "--uri", type=str, default="usb:1.3.5", help="Pluto SDR URI")
     args = parser.parse_args()
 
     server = TacticalMicroServer(grpc_port=args.grpc_port, http_port=args.http_port, sdr_uri=args.sdr_uri)

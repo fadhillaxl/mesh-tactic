@@ -12,7 +12,28 @@ export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH:-}"
 
 GRPC_PORT="${GRPC_PORT:-50051}"
 HTTP_PORT="${HTTP_PORT:-8080}"
-SDR_URI="${SDR_URI:-usb:1.3.5}"
+# Parse optional arguments to override defaults
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --uri|--sdr-uri)
+            SDR_URI="$2"
+            shift 2
+            ;;
+        --grpc-port)
+            GRPC_PORT="$2"
+            shift 2
+            ;;
+        --http-port)
+            HTTP_PORT="$2"
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
 
 echo "=================================================================="
 echo " Starting Tactical SDR Mesh Unified Micro-Server (TSM-Net SG)"
@@ -22,4 +43,8 @@ echo " HTTP Port:  ${HTTP_PORT} (Web Dashboard & Spectrum Stream)"
 echo " SDR URI:    ${SDR_URI}"
 echo "=================================================================="
 
-exec python3 -m tsm.api.server --grpc-port "${GRPC_PORT}" --http-port "${HTTP_PORT}" --sdr-uri "${SDR_URI}" "$@"
+if [ ${#ARGS[@]} -gt 0 ]; then
+    exec python3 -m tsm.api.server --grpc-port "${GRPC_PORT}" --http-port "${HTTP_PORT}" --sdr-uri "${SDR_URI}" "${ARGS[@]}"
+else
+    exec python3 -m tsm.api.server --grpc-port "${GRPC_PORT}" --http-port "${HTTP_PORT}" --sdr-uri "${SDR_URI}"
+fi
