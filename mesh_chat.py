@@ -8,8 +8,10 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SRC_PATH = REPO_ROOT / "src"
+for p in (str(REPO_ROOT), str(SRC_PATH)):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from tools.rf_chat import main
 

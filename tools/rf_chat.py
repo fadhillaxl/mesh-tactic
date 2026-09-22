@@ -46,17 +46,23 @@ except ImportError:
 
 def get_default_callsign() -> str:
     nodename = os.uname().nodename.lower()
+    sysname = os.uname().sysname.lower()
     if "pi5" in nodename:
         return "HQ-PI5"
-    elif "2w" in nodename or "zero" in nodename:
+    elif "2w" in nodename or "zero" in nodename or "aml" in nodename:
         return "OUTPOST-PI2W"
+    elif "darwin" in sysname or "mac" in nodename:
+        return "COMMANDER-MAC"
     return nodename.upper()
 
 
 def get_default_uri() -> str:
     nodename = os.uname().nodename.lower()
-    if "2w" in nodename or "zero" in nodename:
+    sysname = os.uname().sysname.lower()
+    if "2w" in nodename or "zero" in nodename or "aml" in nodename:
         return "ip:192.168.99.240"
+    elif "darwin" in sysname:
+        return "ip:192.168.2.10"
     return "usb:1.3.5"
 
 
@@ -457,46 +463,60 @@ def main():
     args, _ = parser.parse_known_args()
 
     node_str = (args.node or "").lower()
-    is_mac = (node_str == "mac" or "mac" in node_str or (os.uname().sysname == "Darwin" and not args.uri and iio is None))
+    uri = args.uri
+    callsign = args.callsign
 
-    if is_mac:
-        callsign = args.callsign or "MAC-C2"
+    # Map macOS serial tty or RNDIS alias to Pluto IP URI
+    if uri and ("usbmodem" in uri or "/dev/tty" in uri):
+        uri = "ip:192.168.2.10"
+
+    # If explicit gateway mode requested, run RemoteGatewayChat
+    if args.gateway:
+        callsign = callsign or "MAC-C2"
         chat = RemoteGatewayChat(gateway_url=args.gateway, callsign=callsign, target_ip=args.target)
         chat.run_cli()
         return
 
-    # Direct SDR mode (Linux SBC with Pluto SDR)
-    if iio is None:
-        print("[FATAL] 'python3-libiio' is required for direct SDR mode. Install via: sudo apt install python3-libiio", file=sys.stderr)
-        print("        To run in Mac C2 Terminal mode, use: python3 mesh_chat.py --node mac", file=sys.stderr)
-        sys.exit(1)
-
-    uri = args.uri
-    callsign = args.callsign
-
+    # Auto-detect node identity
     if args.node:
         if "pi5" in node_str or node_str in ("1", "node1"):
             if not uri:
                 uri = "usb:1.3.5"
             if not callsign:
                 callsign = "HQ-PI5"
-        elif "2w" in node_str or "zero" in node_str or node_str in ("2", "node2"):
+        elif "2w" in node_str or "zero" in node_str or node_str in ("2", "node2") or "aml" in node_str:
             if not uri:
                 uri = "ip:192.168.99.240"
             if not callsign:
                 callsign = "OUTPOST-PI2W"
+        elif "mac" in node_str:
+            if not uri:
+                uri = "ip:192.168.2.10"
+            if not callsign:
+                callsign = "COMMANDER-MAC"
 
     if not uri:
         uri = get_default_uri()
     if not callsign:
         callsign = get_default_callsign()
 
-    chat = DirectRFChat(
-        uri=uri,
-        callsign=callsign,
-        rx_gain=args.rx_gain,
-        tx_atten=args.tx_atten,
-    )
+    # Try Direct SDR mode first if IIO is available
+    if iio is not None:
+        try:
+            chat = DirectRFChat(
+                uri=uri,
+                callsign=callsign,
+                rx_gain=args.rx_gain,
+                tx_atten=args.tx_atten,
+            )
+            chat.run_cli()
+            return
+        except Exception as e:
+            print(f"[*] Direct SDR context failed ({e}). Falling back to Remote Gateway C2 mode...", file=sys.stderr)
+
+    # Fallback to Remote Gateway C2 mode
+    print("[*] Entering Tactical Mesh Remote C2 mode...")
+    chat = RemoteGatewayChat(gateway_url=args.gateway, callsign=callsign, target_ip=args.target)
     chat.run_cli()
 
 
