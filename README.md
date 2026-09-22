@@ -1,153 +1,107 @@
-# Tactical SDR Mesh Network (TSM-Net SG)
+# Tactical SDR Direct RF Chat (915.000 MHz)
 
-Enterprise-grade decentralized tactical IP Mobile Ad-hoc Network (MANET) bridging Linux kernel-level mesh routing (`batman-adv`) with an SDR continuous digital baseband I/Q modem (`ADALM-PLUTO` / `Pluto+ SDR`) locked to a static ISM frequency (**915.000 MHz**).
+Lightweight, high-performance tactical terminal chat communicating directly over **ADALM-PLUTO SDR** transceivers via **2-FSK** on the static ISM carrier **915.000 MHz**.
 
-Engineered following the **[DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail)** philosophy:
-- **Zero-Bloat & Modular**: Pure Python standard library + NumPy. No heavy runtime dependencies on resource-constrained tactical nodes (e.g. Raspberry Pi Zero 2 W).
-- **Clean Decoupling**: Pure DSP algorithms (modulation, decimation, discriminator, CFO correction, auto-polarity) are completely separated from hardware I/O for 100% automated testability.
-- **Strict MTU Clamping**: Enforces link-level MTU (180 bytes) and 8-byte framing with CRC-16-CCITT integrity verification.
-- **Resilient & Anti-Echo**: Auto-detects local TAP MAC to drop self-transmissions and handles spectral inversion (IQ swap) automatically.
+Operates entirely over-the-air (OTA) without requiring Linux kernel modules, TAP network interfaces, or IP routing overhead.
 
 ---
 
-## Architecture & Directory Layout
+## Key Features
 
-```
+- **Direct RF PHY Link**: 50,000 Baud (50 kbps) 2-FSK modulation at 2.50 MSps baseband with $\pm50\text{ kHz}$ deviation.
+- **Robust DSP Pipeline**:
+  - Carrier Frequency Offset (CFO) cancellation & adaptive DC drift tracking.
+  - Moving-average pulse shaping & decimated correlation sync with automatic spectral inversion detection.
+  - 16-bit CRC-CCITT error detection.
+- **3-Burst Redundancy**: Automatically transmits 3 bursts per message with optimal DMA timing to guarantee delivery over the air.
+- **Cross-Platform Compatibility**:
+  - **Linux (Raspberry Pi 5, Armbian / AML SBC)**: Uses native `python3-libiio` package (`libiio.so.0`).
+  - **macOS (Apple Silicon / Intel)**: Built-in smart shim with fallback to native `/Library/Frameworks/iio.framework/iio`.
+- **Zero Bloat**: Pure Python standard library + `numpy`.
+
+---
+
+## Repository Structure
+
+```text
 mesh-tactic/
-├── config/                      # Centralized Configuration
-│   └── config.yaml              # Active node configuration
-├── docs/                        # Architecture & Verification Documentation
-│   ├── Tactical_SDR_Mesh_PRD.md # Product Requirements Document
-│   └── TACTICAL_MESH_VERIFICATION_REPORT.md # 5-Tier Over-the-air verification report
-├── scripts/                     # Shell & Deployment Scripts
-│   ├── run_node.sh              # Single-command node runner
-│   └── setup_batman.sh          # Kernel MANET (batman-adv) & TAP setup
-├── src/                         # Core Modular Python Package (`tsm`)
+├── mesh_chat.py         # Main interactive tactical RF chat CLI
+├── src/
+│   ├── iio.py           # Smart libiio shim (system dist-packages on Linux, fallback on macOS)
+│   ├── _iio_vendored.py # Vendored ctypes libiio bindings for macOS
 │   └── tsm/
-│       ├── common/              # Shared Protocols & Config Loader
-│       │   ├── config.py        # Typed configuration models with YAML fallback
-│       │   └── framing.py       # Tactical framing (0xD354) & CRC16-CCITT
-│       ├── modem/               # Physical Layer SDR & Baseband DSP
-│       │   ├── constants.py     # RF parameters (915 MHz, 2.5 MSps, 50 kbps)
-│       │   ├── dsp.py           # Pure 2-FSK DSP algorithms (mod/demod/CFO)
-│       │   └── sdr_driver.py    # ADALM-PLUTO IIO hardware streaming interface
-│       ├── network/             # Linux Network & Layer-2/3 Routing
-│       │   ├── tap_bridge.py    # Native Linux /dev/net/tun TAP interface
-│       │   └── orchestrator.py  # TAP <-> Modem IPC bridge & loopback filter
-│       └── apps/                # Tactical User Applications
-│           └── chat.py          # Interactive terminal chat over bat0
-├── tests/                       # Automated Test Suites
-│   ├── conftest.py              # Pytest configuration
-│   ├── test_dsp.py              # Unit tests for 2-FSK DSP & CFO tolerance
-│   ├── test_framing.py          # Unit tests for framing and CRC16
-│   ├── test_config.py           # Unit tests for configuration loader
-│   ├── test_batman_pipeline.py  # Integration test: Kernel TAP <-> loopback
-│   ├── test_hardware.py         # Direct Pluto IIO hardware detection
-│   ├── test_ota_fsk.py          # Over-the-air RF verification
-│   └── test_rf_link.py          # End-to-end multi-node RF test harness
-├── tools/                       # Simulation & Legacy Utilities
-│   ├── simulate_mesh.py         # Multi-node mesh simulator
-│   ├── gr_lora_pluto_bridge.py  # Alternative GNU Radio LoRa bridge
-│   └── tactical_chat_legacy.py  # Legacy serial communicator prototype
-│
-# Root Backward-Compatibility Entrypoints:
-├── run_node.sh                  # Wrapper -> scripts/run_node.sh
-├── setup_batman.sh              # Wrapper -> scripts/setup_batman.sh
-├── sdr_rf_modem.py              # Wrapper -> tsm.modem.sdr_driver
-├── tsm_mesh_orchestrator.py     # Wrapper -> tsm.network.orchestrator
-├── mesh_chat.py                 # Wrapper -> tsm.apps.chat
-└── pyproject.toml               # Modern Python build metadata
+│       ├── common/
+│       │   └── framing.py   # CRC-16-CCITT packet integrity checksums
+│       └── modem/
+│           ├── constants.py # RF physical layer constants (915 MHz, 2.5 MSps, 50 kbps)
+│           └── dsp.py       # Pure 2-FSK modulation and demodulation algorithms
+├── tests/
+│   └── test_dsp.py      # Automated unit tests for DSP mod/demod & CFO tolerance
+├── requirements.txt     # Minimal dependencies (numpy>=1.17)
+└── README.md
 ```
 
 ---
 
-## Quick Start Guide
+## Quick Start
 
-### 1. Requirements & Installation
+### 1. Requirements
 
-On Raspberry Pi OS (64-bit Debian Bookworm):
+- Python 3.8+
+- `numpy>=1.17`
+- `libiio` installed on your operating system:
+  - **Debian / Ubuntu / Armbian**: `sudo apt install python3-libiio libiio-utils`
+  - **macOS**: Installed via official ADI `libiio` installer package.
+
+Install Python dependencies:
 ```bash
-sudo apt update
-sudo apt install -y batctl libiio-utils python3-libiio python3-numpy python3-yaml
-```
-
-Clone the repository and install in editable mode:
-```bash
-git clone https://github.com/mm/mesh-tactic.git
-cd mesh-tactic
-pip3 install -e .
+pip3 install -r requirements.txt
 ```
 
 ---
 
-### 2. Running a Node
+### 2. Running Tactical Chat
 
-#### Node 1 (Command Post / Raspberry Pi 5):
+#### On macOS:
+Connect Pluto SDR via USB (bridged to `192.168.2.10`):
 ```bash
-sudo ./run_node.sh 10.10.0.1/24
+python3 mesh_chat.py --node mac
 ```
 
-#### Node 2 (Tactical Outpost / Raspberry Pi Zero 2 W):
+#### On Raspberry Pi 5:
+Connect Pluto SDR via USB (e.g. `usb:1.3.5`):
 ```bash
-sudo ./run_node.sh 10.10.0.2/24
+python3 mesh_chat.py --node pi5
 ```
 
-This single command automatically:
-1. Loads `batman-adv` kernel module and creates `tap-radio` with MTU clamped to 180 bytes.
-2. Enslaves `tap-radio` into `bat0` and assigns the tactical mesh IP.
-3. Launches the continuous 2-FSK baseband modem at 915.000 MHz.
-4. Starts the orchestrator bridging kernel packets into RF frames.
+#### On Armbian / AML SBC:
+Connect Pluto SDR via USB/RNDIS IP (e.g. `ip:192.168.99.240`):
+```bash
+python3 mesh_chat.py --node aml --uri ip:192.168.99.240
+```
 
 ---
 
-### 3. Interactive Tactical Chat
+### 3. Command Line Options
 
-Open a new terminal on each node and launch the chat application:
-
-* **On Pi 5:**
-  ```bash
-  python3 mesh_chat.py --node pi5
-  ```
-
-* **On Pi 2W:**
-  ```bash
-  python3 mesh_chat.py --node pi2w
-  ```
-
-Type a message and press **[ENTER]**. The text is packetized into IP/UDP datagrams over `bat0`, modulated into 915.000 MHz I/Q baseband, radiated into the air, and displayed on the remote terminal.
-
----
-
-### 4. Running Automated Tests
-
-Run the pure DSP and framing test suite offline (no SDR hardware required):
 ```bash
-python3 -m unittest tests/test_framing.py tests/test_dsp.py tests/test_config.py
+python3 mesh_chat.py --help
 ```
 
-All 14 unit tests will execute in under 0.1 seconds, verifying:
-- 16-bit CRC-CCITT deterministic integrity & single-bit flip detection.
-- Frame sequence incrementation, magic validation (`0xD354`), and fragmentation.
-- Pure 2-FSK modulation waveform synthesis and 16-bit DAC boundary clamping.
-- End-to-end demodulation accuracy with **Carrier Frequency Offset (CFO $\pm 15$ kHz)**.
-- Automatic spectral polarity detection (IQ swap between Pluto and Pluto+).
-- False-positive noise rejection on pure Gaussian noise.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--node` | auto | Node profile (`mac`, `pi5`, `aml`) |
+| `--uri` | auto | Pluto SDR IIO URI (`usb:1.3.5` or `ip:192.168.x.x`) |
+| `--callsign` | auto | Operator callsign (e.g. `COMMANDER-MAC`, `HQ-PI5`, `OUTPOST-PI2W`) |
+| `--rx-gain` | `65.0` | RX Hardware Gain in dB (0 to 73 dB) |
+| `--tx-atten` | `0.0` | TX Attenuation in dB (0.0 dB = maximum RF output) |
 
 ---
 
-### 5. Inspecting Link Telemetry
+## Testing & Verification
 
-* **View mesh neighbors:**
-  ```bash
-  sudo batctl n
-  ```
+Run automated DSP unit tests (modulation, demodulation, CFO tolerance, spectral inversion, noise rejection):
 
-* **View routing table:**
-  ```bash
-  sudo batctl o
-  ```
-
-* **Monitor live packet bridging:**
-  ```bash
-  tail -f orch.log
-  ```
+```bash
+python3 -m unittest tests/test_dsp.py
+```
