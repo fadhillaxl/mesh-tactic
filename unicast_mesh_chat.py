@@ -44,6 +44,10 @@ from tsm.modem.dsp import (
     modulate_2fsk,
     demodulate_2fsk,
 )
+from tsm.modem.mac import (
+    MACMode,
+    TacticalMAC,
+)
 
 try:
     import iio
@@ -183,6 +187,7 @@ class UnicastSDRChat:
         rx_gain: float = 65.0,
         tx_atten: float = 0.0,
         enable_relay: bool = True,
+        mac_mode: str = "lbt",
     ):
         self.node_id = node_id & 0xFFFF
         self.target_id = target_id & 0xFFFF
@@ -199,6 +204,13 @@ class UnicastSDRChat:
         self.seen_messages: Dict[Tuple[int, int], float] = {}
         self.lock = threading.Lock()
         self.last_tx_time = 0.0
+
+        # Initialize Tactical MAC Layer (LBT / Slotted / S-TDMA)
+        try:
+            mode_enum = MACMode(mac_mode.lower())
+        except ValueError:
+            mode_enum = MACMode.LBT
+        self.mac = TacticalMAC(node_id=self.node_id, mode=mode_enum)
 
         # Precompute sync template for 2-FSK PHY
         self.sync_upsampled, self.sync_len = build_sync_template()
@@ -272,6 +284,15 @@ class UnicastSDRChat:
         if self.sdr_mode == "socket":
             self.sock.sendto(wire_bytes, (self.remote_host, self.tx_port))
         else:
+            # Medium Access Control: Check LBT / S-TDMA slot permission
+            if not self.mac.acquire_tx_permission():
+                print(
+                    f"\r\033[K\033[93m[*] [MAC DROP] Channel busy / backoff expired. Dropped burst.\033[0m",
+                    flush=True,
+                )
+                print(self._get_prompt(), end="", flush=True)
+                return
+
             iq = modulate_2fsk(wire_bytes)
             num_samples = len(iq)
             if num_samples > TX_BUF_SIZE:
@@ -409,6 +430,7 @@ class UnicastSDRChat:
                 self.rx_buf.refill()
                 raw_bytes = self.rx_buf.read()
                 raw_samples = np.frombuffer(raw_bytes, dtype=np.int16).reshape(-1, 2)
+                self.mac.feed_rx_samples(raw_samples)
 
                 combined = np.vstack((prev_tail, raw_samples))
                 prev_tail = raw_samples[-(RX_BUF_SIZE // 2) :]
@@ -438,6 +460,7 @@ class UnicastSDRChat:
         print(f" My Node ID:       \033[92m0x{self.node_id:04X} ({self.node_id})\033[0m")
         print(f" Default Target:   \033[93m{'BROADCAST' if self.target_id == BROADCAST_ID else hex(self.target_id)}\033[0m")
         print(f" Multi-Hop Relay:  \033[95m{'ENABLED' if self.enable_relay else 'DISABLED'}\033[0m")
+        print(f" MAC Protocol:     \033[96m{self.mac.mode.value.upper()}\033[0m (Anti-Collision: LBT & S-TDMA Ready)")
         if self.sdr_mode == "socket":
             print(f" Transport Mode:   UDP Socket PDU (RX Port {self.rx_port} | TX Port {self.tx_port})")
         else:
@@ -447,6 +470,7 @@ class UnicastSDRChat:
         print("  /to <node_id>   : Switch target unicast destination (e.g. '/to 2' or '/to 0x0002')")
         print("  /all            : Switch back to broadcast mode (0xFFFF)")
         print("  /relay on|off   : Enable or disable multi-hop packet forwarding")
+        print("  /mac [mode]     : Show or switch MAC mode (lbt, slotted, stdma, off)")
         print("  /exit           : Quit application\n")
 
         try:
@@ -509,6 +533,22 @@ class UnicastSDRChat:
                         self.enable_relay = arg in ("on", "1", "true", "yes")
                     print(f"[*] Multi-Hop Relay is now: {'ENABLED' if self.enable_relay else 'DISABLED'}")
                     continue
+                elif msg.startswith("/mac"):
+                    parts = msg.split(maxsplit=1)
+                    if len(parts) > 1:
+                        mode_str = parts[1].strip().lower()
+                        if mode_str in ("off", "none", "disable"):
+                            self.mac.mode = MACMode.OFF
+                        elif mode_str in ("lbt", "csma"):
+                            self.mac.mode = MACMode.LBT
+                        elif mode_str in ("slotted", "slot"):
+                            self.mac.mode = MACMode.SLOTTED_LBT
+                        elif mode_str in ("stdma", "tdma"):
+                            self.mac.mode = MACMode.STDMA
+                        else:
+                            print(f"[ERROR] Unknown MAC mode '{mode_str}'. Available: lbt, slotted, stdma, off")
+                    print(f"[*] MAC Status: {self.mac.get_status_summary()}")
+                    continue
 
                 self.send_message(msg)
 
@@ -546,6 +586,7 @@ def main():
     parser.add_argument("--rx-gain", type=float, default=65.0, help="RX Gain dB (0-73)")
     parser.add_argument("--tx-atten", type=float, default=0.0, help="TX Attenuation dB (-89 to 0)")
     parser.add_argument("--no-relay", action="store_true", help="Disable multi-hop packet forwarding")
+    parser.add_argument("--mac", default="lbt", choices=["lbt", "slotted", "stdma", "off"], help="MAC anti-collision mode (default: lbt)")
     args = parser.parse_args()
 
     node_str = (args.node or "").lower()
@@ -592,6 +633,7 @@ def main():
         rx_gain=args.rx_gain,
         tx_atten=args.tx_atten,
         enable_relay=not args.no_relay,
+        mac_mode=args.mac,
     )
     chat.run_cli()
 
