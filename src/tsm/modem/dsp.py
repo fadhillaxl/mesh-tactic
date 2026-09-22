@@ -61,7 +61,7 @@ def demodulate_2fsk(
     iq_samples: np.ndarray,
     sync_upsampled: np.ndarray,
     sync_len_samples: int,
-    threshold: float = 0.20,
+    threshold: float = 0.55,
 ) -> Optional[Tuple[bytes, float]]:
     """
     Demodulates baseband I/Q samples into packet payload using:
@@ -107,26 +107,38 @@ def demodulate_2fsk(
     # Determine polarity (handles Pluto/Pluto+ spectral inversion automatically)
     polarity = 1.0 if raw_peak > 0 else -1.0
 
-    # 6. Sample at symbol centers
+    # 6. Sample at symbol centers with Early/On-Time/Late timing search & Adaptive DC Cancellation
     start_sample = best_sample_idx + sync_len_samples + SPS_DEC // 2
-    symbols = (polarity * smoothed)[start_sample :: SPS_DEC]
-    bits = (symbols > 0).astype(np.uint8)
 
-    num_bytes = len(bits) // 8
-    if num_bytes < 3:
-        return None
+    for timing_offset in (0, 1, -1, 2, -2):
+        sample_idx = start_sample + timing_offset
+        if sample_idx < 0:
+            continue
 
-    extracted = np.packbits(bits[: num_bytes * 8]).tobytes()
-    payload_len = extracted[0]
+        syms = (polarity * smoothed)[sample_idx :: SPS_DEC]
+        if len(syms) < 24:
+            continue
 
-    if len(extracted) < 1 + payload_len + 2:
-        return None
+        # Adaptive DC offset compensation to reject carrier frequency offset
+        dc_bias = (np.percentile(syms[:80], 75) + np.percentile(syms[:80], 25)) / 2.0
+        syms_ac = syms - dc_bias
+        bits = (syms_ac > 0).astype(np.uint8)
 
-    payload = extracted[1 : 1 + payload_len]
-    rx_crc = struct.unpack("!H", extracted[1 + payload_len : 1 + payload_len + 2])[0]
-    expected_crc = crc16_ccitt(extracted[: 1 + payload_len])
+        num_bytes = len(bits) // 8
+        if num_bytes < 3:
+            continue
 
-    if rx_crc == expected_crc:
-        return payload, norm_corr
+        extracted = np.packbits(bits[: num_bytes * 8]).tobytes()
+        payload_len = extracted[0]
+
+        if len(extracted) < 1 + payload_len + 2:
+            continue
+
+        payload = extracted[1 : 1 + payload_len]
+        rx_crc = struct.unpack("!H", extracted[1 + payload_len : 1 + payload_len + 2])[0]
+        expected_crc = crc16_ccitt(extracted[: 1 + payload_len])
+
+        if rx_crc == expected_crc:
+            return payload, norm_corr
 
     return None

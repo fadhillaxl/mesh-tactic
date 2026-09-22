@@ -35,10 +35,15 @@ def get_local_mesh_ip() -> str:
 
 def get_callsign(ip: str) -> str:
     """Determines node callsign based on IP or hostname."""
+    if ip:
+        if ip.endswith(".1") or ip == "10.10.0.1":
+            return "HQ-PI5"
+        elif ip.endswith(".2") or ip == "10.10.0.2":
+            return "OUTPOST-PI2W"
     nodename = os.uname().nodename.lower()
-    if "pi5" in nodename or ip.endswith(".1"):
+    if "pi5" in nodename:
         return "HQ-PI5"
-    elif "2w" in nodename or "zero" in nodename or ip.endswith(".2"):
+    elif "2w" in nodename or "zero" in nodename:
         return "OUTPOST-PI2W"
     return nodename.upper()
 

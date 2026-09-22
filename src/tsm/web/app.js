@@ -335,7 +335,7 @@
     msgEl.className = `chat-msg ${isOutbound ? 'outbound' : 'inbound'}`;
     msgEl.innerHTML = `
       <span class="time">[${timeStr}]</span>
-      <span class="sender">[${escapeHtml(msg.sender)}]</span>
+      <span class="sender">[${escapeHtml(msg.sender_callsign || msg.sender || msg.sender_ip)}]</span>
       <span class="text">${escapeHtml(msg.text)}</span>
     `;
 
