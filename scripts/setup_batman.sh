@@ -15,14 +15,14 @@ fi
 NODE_IP="${1:-10.10.0.1/24}"
 TAP_DEV="tap-radio"
 BAT_DEV="bat0"
-RADIO_MTU=180
+RADIO_MTU=240
+BAT_MTU=208
 
 echo "============================================================"
 echo " Initializing Tactical SDR Mesh Network (TSM-Net SG)"
 echo " Node IP:     ${NODE_IP}"
-echo " TAP Device:  ${TAP_DEV}"
-echo " BATMAN Dev:  ${BAT_DEV}"
-echo " Clamped MTU: ${RADIO_MTU} bytes"
+echo " TAP Device:  ${TAP_DEV} (MTU: ${RADIO_MTU})"
+echo " BATMAN Dev:  ${BAT_DEV} (MTU: ${BAT_MTU})"
 echo "============================================================"
 
 # 1. Load the batman-adv kernel module
@@ -59,7 +59,7 @@ batctl if add "${TAP_DEV}"
 
 # 6. Bring up bat0 and assign mesh IP
 echo "[5/6] Activating '${BAT_DEV}' with IP ${NODE_IP}..."
-ip link set dev "${BAT_DEV}" mtu "${RADIO_MTU}"
+ip link set dev "${BAT_DEV}" mtu "${BAT_MTU}"
 ip addr flush dev "${BAT_DEV}" || true
 ip addr add "${NODE_IP}" dev "${BAT_DEV}"
 ip link set dev "${BAT_DEV}" up

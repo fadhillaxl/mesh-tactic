@@ -374,9 +374,9 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
                     sender_ip = addr[0]
                     now = time.time()
 
-                    # Deduplicate burst transmissions within 1.5 seconds
+                    # Deduplicate burst transmissions within 2.5 seconds
                     dedup_key = f"{sender_ip}:{text}"
-                    if dedup_key in last_seen and now - last_seen[dedup_key] < 1.5:
+                    if dedup_key in last_seen and now - last_seen[dedup_key] < 2.5:
                         continue
                     last_seen[dedup_key] = now
                     if len(last_seen) > 100:
@@ -412,22 +412,28 @@ class TacticalChatServicer(tsm_pb2_grpc.TacticalChatServiceServicer):
             self.subscribers.difference_update(dead_subs)
 
     def SendMessage(self, request, context):
-        target = request.target_ip.strip() if request.target_ip else "255.255.255.255"
+        local_ip = get_local_mesh_ip()
+        target = request.target_ip.strip() if request.target_ip else ""
+        if not target:
+            target = "10.10.0.1" if local_ip.endswith(".2") else "10.10.0.2"
+
         text = request.text.strip()
         msg_id = str(uuid.uuid4())[:8]
         now = time.time()
+        payload = text.encode("utf-8")
 
         try:
-            self.sock_tx.sendto(text.encode("utf-8"), (target, self.port))
-            # Resend burst once after 80ms for half-duplex loss tolerance
-            time.sleep(0.08)
-            self.sock_tx.sendto(text.encode("utf-8"), (target, self.port))
+            # 3-burst transmission spaced by 120ms for half-duplex radio loss tolerance
+            self.sock_tx.sendto(payload, (target, self.port))
+            time.sleep(0.12)
+            self.sock_tx.sendto(payload, (target, self.port))
+            time.sleep(0.12)
+            self.sock_tx.sendto(payload, (target, self.port))
             delivered = True
         except Exception as e:
             print(f"[ERROR] Failed to send UDP chat: {e}", file=sys.stderr)
             delivered = False
 
-        local_ip = get_local_mesh_ip()
         msg = tsm_pb2.ChatMessage(
             message_id=msg_id,
             timestamp=now,

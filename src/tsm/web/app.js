@@ -259,10 +259,13 @@
         const rssiPct = Math.max(5, Math.min(100, ((data.rssi_db - 30) / 80) * 100));
         rssiBarEl.style.width = `${rssiPct}%`;
 
-        // Update target IP default if outpost
-        if (data.mesh_ip.endsWith('.2') && chatTargetInput.value === '10.10.0.2') {
+        // Update target IP default based on local node IP
+        if (data.mesh_ip.endsWith('.2') && (!chatTargetInput.value || chatTargetInput.value === '10.10.0.2')) {
           chatTargetInput.value = '10.10.0.1';
           pingTargetInput.value = '10.10.0.1';
+        } else if (data.mesh_ip.endsWith('.1') && (!chatTargetInput.value || chatTargetInput.value === '10.10.0.1')) {
+          chatTargetInput.value = '10.10.0.2';
+          pingTargetInput.value = '10.10.0.2';
         }
 
         // Neighbors update
@@ -327,7 +330,14 @@
   // ----------------------------------------------------------------------------
   // 5. Chat UI Handling
   // ----------------------------------------------------------------------------
+  const renderedMsgIds = new Set();
+
   function appendChatMessage(msg) {
+    if (!msg) return;
+    const msgId = msg.id || `${msg.sender_ip || msg.sender}:${msg.timestamp}:${msg.text}`;
+    if (renderedMsgIds.has(msgId)) return;
+    renderedMsgIds.add(msgId);
+
     const isOutbound = msg.sender_ip === meshIpEl.textContent;
     const timeStr = new Date(msg.timestamp * 1000).toLocaleTimeString();
 
@@ -431,15 +441,20 @@
   window.addEventListener('resize', resizeCanvases);
   resizeCanvases();
 
-  // Load initial history and start SSE
-  fetch('/api/history')
-    .then(r => r.json())
-    .then(messages => {
-      if (messages && messages.length > 0) {
-        messages.forEach(appendChatMessage);
-      }
-    })
-    .catch(() => {});
+  // Load initial history and background polling sync fallback
+  function syncHistory() {
+    fetch('/api/history')
+      .then(r => r.json())
+      .then(messages => {
+        if (messages && messages.length > 0) {
+          messages.forEach(appendChatMessage);
+        }
+      })
+      .catch(() => {});
+  }
+
+  syncHistory();
+  setInterval(syncHistory, 2500);
 
   connectSSE();
 })();

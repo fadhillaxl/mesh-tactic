@@ -61,9 +61,9 @@ network:
   # Mesh IP address for this node (change per node, e.g., 10.10.0.1/24, 10.10.0.2/24)
   node_ip: "10.10.0.1/24"
 
-  # MTU Clamping: LoRa max physical payload is 255 bytes.
-  # Clamping MTU to 180 bytes leaves ample headroom for Ethernet (14B) + BATMAN (32B) + Framing (8B).
-  mtu: 180
+  # MTU Clamping: Radio max physical payload is 240 bytes.
+  # Clamping MTU to 240 bytes prevents kernel layer-2 fragmentation in batman-adv.
+  mtu: 240
 
   # Localhost UDP Socket PDU ports connecting Orchestrator <-> GNU Radio Bridge
   ipc_tx_port: 52001    # Orchestrator sends TX PDUs to GNU Radio on this port
