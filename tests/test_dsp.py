@@ -96,6 +96,42 @@ class TestModemDSP(unittest.TestCase):
         result = demodulate_2fsk(noise_samples, self.sync_upsampled, self.sync_len)
         self.assertIsNone(result)
 
+    def test_binary_unicast_mesh_packet_roundtrip(self):
+        """Verify binary packet with asymmetric zeros (unicast header) modulates and demodulates properly."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from unicast_mesh_chat import MeshPacket
+
+        packet = MeshPacket(
+            src_id=0x0003,
+            dst_id=0x0001,
+            msg_id=1,
+            payload="ini dari 3 ke 1",
+        )
+        raw = packet.pack()
+        iq = modulate_2fsk(raw)
+
+        result = demodulate_2fsk(iq, self.sync_upsampled, self.sync_len)
+        self.assertIsNotNone(result, "Unicast binary packet failed demodulation")
+        decoded_raw, corr = result
+        self.assertEqual(decoded_raw, raw)
+
+        unpacked = MeshPacket.unpack(decoded_raw)
+        self.assertIsNotNone(unpacked)
+        self.assertEqual(unpacked.src_id, 0x0003)
+        self.assertEqual(unpacked.dst_id, 0x0001)
+        self.assertEqual(unpacked.payload, "ini dari 3 ke 1")
+
+    def test_zero_heavy_payload_roundtrip(self):
+        """Ensure payloads dominated by null bytes (which broke percentile dc_bias) decode 100%."""
+        payload = b"\x00" * 30 + b"\x01\x02\x03"
+        iq = modulate_2fsk(payload)
+
+        result = demodulate_2fsk(iq, self.sync_upsampled, self.sync_len)
+        self.assertIsNotNone(result, "Zero-heavy payload failed demodulation")
+        decoded_payload, corr = result
+        self.assertEqual(decoded_payload, payload)
+
 
 if __name__ == "__main__":
     unittest.main()
+

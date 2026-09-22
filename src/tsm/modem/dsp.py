@@ -110,35 +110,38 @@ def demodulate_2fsk(
     # 6. Sample at symbol centers with Early/On-Time/Late timing search & Adaptive DC Cancellation
     start_sample = best_sample_idx + sync_len_samples + SPS_DEC // 2
 
+    # Preamble-based residual CFO estimation (preamble is alternating 0xAA = 10101010...)
+    preamble_start = max(0, best_sample_idx - 128)
+    preamble_samples = smoothed[preamble_start:best_sample_idx]
+    cfo_residual = float(np.mean(preamble_samples)) if len(preamble_samples) >= 16 else 0.0
+
     for timing_offset in (0, 1, -1, 2, -2):
         sample_idx = start_sample + timing_offset
         if sample_idx < 0:
             continue
 
-        syms = (polarity * smoothed)[sample_idx :: SPS_DEC]
-        if len(syms) < 24:
-            continue
+        # Try preamble-derived bias and zero bias (robust to all bit distributions)
+        for bias in (cfo_residual, 0.0):
+            syms = (polarity * (smoothed - bias))[sample_idx :: SPS_DEC]
+            if len(syms) < 24:
+                continue
 
-        # Adaptive DC offset compensation to reject carrier frequency offset
-        dc_bias = (np.percentile(syms[:80], 75) + np.percentile(syms[:80], 25)) / 2.0
-        syms_ac = syms - dc_bias
-        bits = (syms_ac > 0).astype(np.uint8)
+            bits = (syms > 0).astype(np.uint8)
+            num_bytes = len(bits) // 8
+            if num_bytes < 3:
+                continue
 
-        num_bytes = len(bits) // 8
-        if num_bytes < 3:
-            continue
+            extracted = np.packbits(bits[: num_bytes * 8]).tobytes()
+            payload_len = extracted[0]
 
-        extracted = np.packbits(bits[: num_bytes * 8]).tobytes()
-        payload_len = extracted[0]
+            if len(extracted) < 1 + payload_len + 2:
+                continue
 
-        if len(extracted) < 1 + payload_len + 2:
-            continue
+            payload = extracted[1 : 1 + payload_len]
+            rx_crc = struct.unpack("!H", extracted[1 + payload_len : 1 + payload_len + 2])[0]
+            expected_crc = crc16_ccitt(extracted[: 1 + payload_len])
 
-        payload = extracted[1 : 1 + payload_len]
-        rx_crc = struct.unpack("!H", extracted[1 + payload_len : 1 + payload_len + 2])[0]
-        expected_crc = crc16_ccitt(extracted[: 1 + payload_len])
-
-        if rx_crc == expected_crc:
-            return payload, norm_corr
+            if rx_crc == expected_crc:
+                return payload, norm_corr
 
     return None

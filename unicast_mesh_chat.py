@@ -267,7 +267,7 @@ class UnicastSDRChat:
             self.seq_counter = (self.seq_counter + 1) & 0xFFFF
             return self.seq_counter
 
-    def _transmit_raw(self, wire_bytes: bytes):
+    def _transmit_raw(self, wire_bytes: bytes, repeats: int = 3):
         """Transmits raw binary frame over active transport (SDR or Socket)."""
         if self.sdr_mode == "socket":
             self.sock.sendto(wire_bytes, (self.remote_host, self.tx_port))
@@ -284,10 +284,10 @@ class UnicastSDRChat:
 
             with self.lock:
                 self.last_tx_time = time.time()
-                for _ in range(3):
+                for _ in range(max(1, repeats)):
                     self.tx_buf.write(raw_dma)
                     self.tx_buf.push()
-                    time.sleep((num_samples / SAMPLE_RATE) + 0.05)
+                    time.sleep((num_samples / SAMPLE_RATE) + 0.04)
 
     def send_message(self, text: str, dst_id: Optional[int] = None):
         """Packages text into binary MeshPacket and transmits over the link."""
@@ -306,23 +306,31 @@ class UnicastSDRChat:
 
         wire_bytes = packet.pack()
         self.seen_messages[(self.node_id, msg_id)] = time.time()
-        self._transmit_raw(wire_bytes)
+        self._transmit_raw(wire_bytes, repeats=3)
 
         now_str = time.strftime("%H:%M:%S")
         target_str = "BROADCAST" if target == BROADCAST_ID else f"Node 0x{target:04X}"
         print(f"\r\033[K[{now_str}] \033[93m[TX -> {target_str}]\033[0m: {text}", flush=True)
 
     def _forward_relay(self, packet: MeshPacket):
-        """Multi-hop Relay: Decrements TTL and re-broadcasts packet over RF."""
+        """Multi-hop Relay: Decrements TTL and re-broadcasts packet over RF asynchronously."""
         if not self.enable_relay or packet.ttl <= 1:
             return
 
         packet.ttl -= 1
         packet.flags |= FLAG_RELAYED
-        time.sleep(0.04)  # Small backoff delay to avoid collision
-        self._transmit_raw(packet.pack())
-        print(f"\r\033[K\033[90m[*] [RELAY] Forwarded Msg #{packet.msg_id:04X} to Node 0x{packet.dst_id:04X} (TTL left: {packet.ttl})\033[0m", flush=True)
-        print(self._get_prompt(), end="", flush=True)
+
+        def _relay_worker():
+            # Random jitter backoff (40ms - 90ms) to prevent mutual RF packet collision
+            time.sleep(0.04 + (self.node_id % 5) * 0.015)
+            self._transmit_raw(packet.pack(), repeats=1)
+            print(
+                f"\r\033[K\033[90m[*] [RELAY] Forwarded Msg #{packet.msg_id:04X} to Node 0x{packet.dst_id:04X} (TTL left: {packet.ttl})\033[0m",
+                flush=True,
+            )
+            print(self._get_prompt(), end="", flush=True)
+
+        threading.Thread(target=_relay_worker, daemon=True).start()
 
     def _process_incoming_packet(self, packet: MeshPacket, corr: Optional[float] = None):
         """Applies Unicast vs Broadcast reception filtering logic."""
@@ -365,7 +373,12 @@ class UnicastSDRChat:
 
         else:
             # 3. PACKET FOR ANOTHER NODE (NOT ME)
-            # Silently drop from terminal screen, but forward if multi-hop relay is enabled
+            # Show operator that packet was physically received over RF but addressed elsewhere
+            print(
+                f"\r\033[K\033[90m[{now_str}] [OVERHEARD{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} (Private unicast - not for this node)\033[0m",
+                flush=True,
+            )
+            print(self._get_prompt(), end="", flush=True)
             self._forward_relay(packet)
 
     def _rx_worker_socket(self):
@@ -458,13 +471,30 @@ class UnicastSDRChat:
                 elif msg.startswith("/to"):
                     parts = msg.split(maxsplit=1)
                     if len(parts) > 1:
-                        raw_id = parts[1].strip()
-                        try:
-                            new_dst = int(raw_id, 16) if raw_id.startswith("0x") or raw_id.startswith("0X") else int(raw_id)
-                            self.target_id = new_dst & 0xFFFF
-                            print(f"[*] Target destination updated to: \033[93m0x{self.target_id:04X}\033[0m")
-                        except ValueError:
-                            print(f"[ERROR] Invalid Node ID '{raw_id}'. Use decimal (e.g. 2) or hex (e.g. 0x0002).")
+                        raw_id = parts[1].strip().lower()
+                        aliases = {
+                            "mac": 0x0001,
+                            "pi5": 0x0002,
+                            "raspi5": 0x0002,
+                            "aml": 0x0003,
+                            "2w": 0x0003,
+                            "node1": 0x0001,
+                            "node2": 0x0002,
+                            "node3": 0x0003,
+                            "all": BROADCAST_ID,
+                            "broadcast": BROADCAST_ID,
+                        }
+                        if raw_id in aliases:
+                            self.target_id = aliases[raw_id]
+                            target_desc = "BROADCAST" if self.target_id == BROADCAST_ID else f"0x{self.target_id:04X} ({raw_id.upper()})"
+                            print(f"[*] Target destination updated to: \033[93m{target_desc}\033[0m")
+                        else:
+                            try:
+                                new_dst = int(raw_id, 16) if raw_id.startswith("0x") or raw_id.startswith("0X") else int(raw_id)
+                                self.target_id = new_dst & 0xFFFF
+                                print(f"[*] Target destination updated to: \033[93m0x{self.target_id:04X}\033[0m")
+                            except ValueError:
+                                print(f"[ERROR] Invalid Node ID '{raw_id}'. Use decimal (e.g. 2), hex (e.g. 0x0002), or alias ('mac', 'pi5', 'aml').")
                     else:
                         print(f"[*] Current target: 0x{self.target_id:04X}")
                     continue
