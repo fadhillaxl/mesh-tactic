@@ -41,8 +41,7 @@ from tsm.modem.dsp import (
 try:
     import iio
 except ImportError:
-    print("[FATAL] 'python3-libiio' is required. Install via: sudo apt install python3-libiio", file=sys.stderr)
-    sys.exit(1)
+    iio = None
 
 
 def get_default_callsign() -> str:
@@ -238,20 +237,244 @@ class DirectRFChat:
             print("\n[*] Shutting down RF Chat interface. 73!")
 
 
+class RemoteGatewayChat:
+    """
+    Tactical Mesh C2 Terminal for macOS & Remote Operator Workstations.
+    Connects to an active mesh gateway node (RasPi 5 / AML) over HTTP/SSE API.
+    Bridges operator messages to/from the 915.000 MHz 2-FSK SDR mesh.
+    """
+
+    def __init__(self, gateway_url: Optional[str] = None, callsign: str = "MAC-C2", target_ip: str = "255.255.255.255"):
+        self.callsign = callsign
+        self.target_ip = target_ip
+        self.running = False
+        self.seen_msg_ids = set()
+        self.gateway_url = (gateway_url or self._auto_discover_gateway()).rstrip("/")
+
+    def _auto_discover_gateway(self) -> str:
+        candidates = [
+            os.environ.get("MESH_GATEWAY", ""),
+            "http://192.168.0.120:8080",  # RasPi 5 (HQ)
+            "http://192.168.0.12:8080",   # AML (Outpost)
+            "http://raspi5.local:8080",
+            "http://127.0.0.1:8080",
+        ]
+        import urllib.request
+        for cand in candidates:
+            if not cand:
+                continue
+            cand_url = cand if cand.startswith("http://") or cand.startswith("https://") else f"http://{cand}"
+            if cand_url.count(":") == 1:
+                cand_url = f"{cand_url}:8080"
+            try:
+                req = urllib.request.Request(f"{cand_url}/api/telemetry", headers={"User-Agent": "TSM-MacTerminal/1.0"})
+                with urllib.request.urlopen(req, timeout=1.0) as resp:
+                    if resp.status == 200:
+                        return cand_url
+            except Exception:
+                continue
+        # Default fallback
+        return "http://192.168.0.120:8080"
+
+    def _rx_worker(self):
+        import urllib.request
+        import json
+
+        # Pre-seed history so we don't spam the console on startup, but show last 3 messages
+        try:
+            req = urllib.request.Request(f"{self.gateway_url}/api/history", headers={"User-Agent": "TSM-MacTerminal/1.0"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                msgs = json.loads(resp.read().decode("utf-8"))
+                for m in msgs[:-3]:
+                    mid = m.get("id") or f"{m.get('sender_ip')}:{m.get('timestamp')}:{m.get('text')}"
+                    self.seen_msg_ids.add(mid)
+                for m in msgs[-3:]:
+                    mid = m.get("id") or f"{m.get('sender_ip')}:{m.get('timestamp')}:{m.get('text')}"
+                    self.seen_msg_ids.add(mid)
+                    self._print_incoming_msg(m)
+        except Exception:
+            pass
+
+        while self.running:
+            try:
+                req = urllib.request.Request(f"{self.gateway_url}/api/history", headers={"User-Agent": "TSM-MacTerminal/1.0"})
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    msgs = json.loads(resp.read().decode("utf-8"))
+                    for m in msgs:
+                        mid = m.get("id") or f"{m.get('sender_ip')}:{m.get('timestamp')}:{m.get('text')}"
+                        if mid not in self.seen_msg_ids:
+                            self.seen_msg_ids.add(mid)
+                            self._print_incoming_msg(m)
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    def _print_incoming_msg(self, m: dict):
+        sender = m.get("sender_callsign") or m.get("sender") or m.get("sender_ip", "UNKNOWN")
+        text = m.get("text", "")
+        ts = m.get("timestamp", time.time())
+        t_str = time.strftime("%H:%M:%S", time.localtime(ts))
+
+        # Check if outbound from self
+        if sender == self.callsign or text.startswith(f"[{self.callsign}]"):
+            return
+
+        if "PI5" in sender:
+            color = "\033[92m"  # Vivid Green for HQ-PI5
+        elif "2W" in sender or "AML" in sender:
+            color = "\033[96m"  # Vivid Cyan for Outpost
+        elif "MAC" in sender:
+            color = "\033[93m"  # Yellow for Mac
+        else:
+            color = "\033[95m"  # Magenta
+
+        print(f"\r\033[K{color}[{t_str}] [{sender}] {text}\033[0m")
+        if sys.stdin.isatty():
+            print(f"[{self.callsign}] >>> ", end="", flush=True)
+
+    def transmit_text(self, text: str):
+        import urllib.request
+        import json
+
+        url = f"{self.gateway_url}/api/chat"
+        payload = {
+            "target_ip": self.target_ip,
+            "text": f"[{self.callsign}] {text}" if not text.startswith("[") else text,
+        }
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+                if res.get("delivered"):
+                    print(f"\033[90m[TX -> MESH OK] {payload['text']}\033[0m")
+                else:
+                    print(f"\033[91m[TX FAILED]\033[0m")
+        except Exception as e:
+            print(f"\033[91m[ERROR] Gateway unreachable at {self.gateway_url}: {e}\033[0m")
+
+    def _show_status(self):
+        import urllib.request
+        import json
+        try:
+            req = urllib.request.Request(f"{self.gateway_url}/api/telemetry", headers={"User-Agent": "TSM-MacTerminal/1.0"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                node = data.get("node", {})
+                sdr = data.get("sdr", {})
+                neighbors = data.get("neighbors", [])
+                print(f"\n--- Mesh Node Status ({self.gateway_url}) ---")
+                print(f" Node:      {node.get('hostname')} | IP: {node.get('mesh_ip')} | Uptime: {node.get('uptime_sec')}s")
+                print(f" SDR Radio: {sdr.get('center_freq_hz', 915000000)/1e6:.3f} MHz | RSSI: {sdr.get('live_rssi_db', 0):.1f} dB | Temp: {sdr.get('fpga_temp_c', 0):.1f} °C")
+                print(f" B.A.T.M.A.N. Peers: {len(neighbors)}")
+                for n in neighbors:
+                    print(f"   - Peer {n.get('mac')}: TQ={n.get('tq_metric')}/255 ({round(n.get('tq_metric',0)/255*100)}%) | seen: {n.get('last_seen_sec'):.1f}s ago")
+                print("---------------------------------------------\n")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch status: {e}")
+
+    def _execute_ping(self, target: str):
+        import urllib.request
+        import json
+        print(f"[*] Executing mesh ping to {target} via {self.gateway_url} ...")
+        try:
+            payload = json.dumps({"target_ip": target, "count": 3}).encode("utf-8")
+            req = urllib.request.Request(f"{self.gateway_url}/api/ping", data=payload, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=12.0) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+                if res.get("success"):
+                    print(f"\033[92m[PING OK] {res.get('packets_recv')}/{res.get('packets_sent')} packets ({res.get('packet_loss_pct')}% loss) | RTT: {res.get('rtt_avg_ms'):.1f} ms\033[0m")
+                else:
+                    print(f"\033[91m[PING FAIL] 100% packet loss to {target}\033[0m")
+        except Exception as e:
+            print(f"[ERROR] Ping error: {e}")
+
+    def run_cli(self):
+        self.running = True
+
+        rx_thread = threading.Thread(target=self._rx_worker, daemon=True)
+        rx_thread.start()
+
+        print("=" * 66)
+        print(" TACTICAL MESH C2 TERMINAL (TSM-NET SG) - MAC STATION")
+        print(f" Callsign:    \033[96m{self.callsign}\033[0m")
+        print(f" Gateway:     \033[92m{self.gateway_url}\033[0m")
+        print(f" Target IP:   \033[93m{self.target_ip}\033[0m")
+        print(" Link Mode:   LAN-bridged to 915.000 MHz 2-FSK SDR Mesh")
+        print("=" * 66)
+        print("Type message and press ENTER to transmit. Commands: /target, /status, /ping, /exit\n")
+
+        try:
+            while self.running:
+                try:
+                    if sys.stdin.isatty():
+                        msg = input(f"[{self.callsign}] >>> ").strip()
+                    else:
+                        line = sys.stdin.readline()
+                        if not line:
+                            time.sleep(0.2)
+                            continue
+                        msg = line.strip()
+                except (EOFError, KeyboardInterrupt):
+                    break
+
+                if not msg:
+                    continue
+                if msg.lower() in ("/exit", "/quit", "exit", "quit"):
+                    break
+                elif msg.startswith("/target"):
+                    parts = msg.split(maxsplit=1)
+                    if len(parts) > 1:
+                        self.target_ip = parts[1].strip()
+                        print(f"[*] Target IP changed to: {self.target_ip}")
+                    else:
+                        print(f"[*] Current Target IP: {self.target_ip}")
+                    continue
+                elif msg == "/status":
+                    self._show_status()
+                    continue
+                elif msg.startswith("/ping"):
+                    parts = msg.split(maxsplit=1)
+                    tgt = parts[1].strip() if len(parts) > 1 else "10.10.0.1"
+                    self._execute_ping(tgt)
+                    continue
+
+                self.transmit_text(msg)
+        finally:
+            self.running = False
+            print("\n[*] Disconnected from Tactical Mesh. 73!")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Tactical SDR Direct RF Chat (915 MHz)")
-    parser.add_argument("--node", default="", help="Node name (e.g. pi5, pi2w, node1, node2)")
+    parser = argparse.ArgumentParser(description="Tactical SDR RF Chat & Mesh C2 Terminal")
+    parser.add_argument("--node", default="", help="Node name (e.g. pi5, pi2w, mac, node1, node2)")
     parser.add_argument("--uri", default="", help="Pluto SDR URI (e.g. usb:1.3.5 or ip:192.168.99.240)")
-    parser.add_argument("--callsign", default="", help="Callsign (default: auto from hostname)")
+    parser.add_argument("--callsign", default="", help="Callsign (default: auto from hostname or MAC-C2)")
+    parser.add_argument("--gateway", default="", help="Gateway HTTP URL for Mac C2 mode (e.g. http://192.168.0.120:8080)")
+    parser.add_argument("--target", default="255.255.255.255", help="Target mesh IP for chat")
     parser.add_argument("--rx-gain", type=float, default=65.0, help="RX Gain dB (0-73)")
     parser.add_argument("--tx-atten", type=float, default=0.0, help="TX Attenuation dB (-89 to 0)")
     args, _ = parser.parse_known_args()
+
+    node_str = (args.node or "").lower()
+    is_mac = (node_str == "mac" or "mac" in node_str or (os.uname().sysname == "Darwin" and not args.uri and iio is None))
+
+    if is_mac:
+        callsign = args.callsign or "MAC-C2"
+        chat = RemoteGatewayChat(gateway_url=args.gateway, callsign=callsign, target_ip=args.target)
+        chat.run_cli()
+        return
+
+    # Direct SDR mode (Linux SBC with Pluto SDR)
+    if iio is None:
+        print("[FATAL] 'python3-libiio' is required for direct SDR mode. Install via: sudo apt install python3-libiio", file=sys.stderr)
+        print("        To run in Mac C2 Terminal mode, use: python3 mesh_chat.py --node mac", file=sys.stderr)
+        sys.exit(1)
 
     uri = args.uri
     callsign = args.callsign
 
     if args.node:
-        node_str = args.node.lower()
         if "pi5" in node_str or node_str in ("1", "node1"):
             if not uri:
                 uri = "usb:1.3.5"
