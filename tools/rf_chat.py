@@ -143,15 +143,14 @@ class DirectRFChat:
 
         with self.lock:
             self.last_tx_time = time.time()
-            # Transmit 2 bursts for link reliability
-            for _ in range(2):
+            # Transmit 3 bursts for link reliability over the air
+            for _ in range(3):
                 self.tx_buf.write(raw_bytes)
                 self.tx_buf.push()
-                time.sleep((num_samples / SAMPLE_RATE) + 0.02)
+                time.sleep((num_samples / SAMPLE_RATE) + 0.05)
 
         now_str = time.strftime("%H:%M:%S")
         print(f"\r\033[K[{now_str}] <{self.callsign}> (TX): {text}", flush=True)
-        print(f"[{self.callsign}] >>> ", end="", flush=True)
 
     def _rx_worker(self):
         """Continuous RX loop capturing and demodulating OTA frames."""
@@ -171,7 +170,7 @@ class DirectRFChat:
                 combined = np.vstack((prev_tail, raw_samples))
                 prev_tail = raw_samples[-(RX_BUF_SIZE // 2) :]
 
-                result = demodulate_2fsk(combined, self.sync_upsampled, self.sync_len, threshold=0.45)
+                result = demodulate_2fsk(combined, self.sync_upsampled, self.sync_len, threshold=0.38)
                 if result is not None:
                     payload, corr = result
                     # Parse callsign and text
