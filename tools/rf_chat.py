@@ -127,8 +127,8 @@ class DirectRFChat:
 
     def transmit_text(self, text: str):
         """Encapsulates text message with callsign and transmits over RF."""
-        # Frame format: [CALLSIGN_BYTES: max 12B][0x00][TEXT_BYTES]
-        callsign_bytes = self.callsign.encode("utf-8")[:12]
+        # Frame format: [CALLSIGN_BYTES: max 16B][0x00][TEXT_BYTES]
+        callsign_bytes = self.callsign.encode("utf-8")[:16]
         payload = callsign_bytes + b"\x00" + text.encode("utf-8")[:220]
 
         iq = modulate_2fsk(payload)
@@ -183,7 +183,7 @@ class DirectRFChat:
                         text = payload.decode("utf-8", errors="replace")
 
                     # Ignore self transmission
-                    if sender == self.callsign:
+                    if sender == self.callsign or self.callsign.startswith(sender):
                         continue
 
                     # Deduplicate retransmitted bursts within 2.0s
