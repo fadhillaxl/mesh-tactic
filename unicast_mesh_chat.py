@@ -49,6 +49,11 @@ from tsm.modem.mac import (
     TacticalMAC,
 )
 from tsm.config import AppConfig, CONFIG
+from tsm.telemetry import (
+    TrainAISTelemetry,
+    DummyGPSSimulator,
+    HEX_PREFIX,
+)
 
 try:
     import iio
@@ -189,6 +194,8 @@ class UnicastSDRChat:
         tx_atten: float = 0.0,
         enable_relay: bool = True,
         mac_mode: str = "lbt",
+        sim_enabled: bool = False,
+        sim_interval: float = 5.0,
     ):
         self.node_id = node_id & 0xFFFF
         self.target_id = target_id & 0xFFFF
@@ -200,6 +207,10 @@ class UnicastSDRChat:
         self.rx_gain = rx_gain
         self.tx_atten = tx_atten
         self.enable_relay = enable_relay
+        self.sim_enabled = sim_enabled
+        self.sim_interval = max(0.5, float(sim_interval))
+        self.simulator = DummyGPSSimulator(train_id=self.node_id)
+        self.sim_thread: Optional[threading.Thread] = None
         self.running = False
         self.seq_counter = 0
         self.seen_messages: Dict[Tuple[int, int], float] = {}
@@ -221,6 +232,33 @@ class UnicastSDRChat:
             self._init_socket()
         else:
             self._init_pluto_sdr()
+
+    def _sim_worker(self):
+        """Background worker periodically advancing dummy GPS and broadcasting hex telemetry."""
+        while self.running and self.sim_enabled:
+            time.sleep(self.sim_interval)
+            if not self.running or not self.sim_enabled:
+                break
+            telemetry = self.simulator.step(dt=self.sim_interval)
+            hex_payload = telemetry.to_hex_payload()
+            self.send_message(hex_payload)
+
+    def start_simulation(self, interval: Optional[float] = None):
+        """Starts periodic dummy GPS & device health hex broadcasting."""
+        if interval is not None:
+            self.sim_interval = max(0.5, float(interval))
+        self.sim_enabled = True
+        if self.sim_thread is None or not self.sim_thread.is_alive():
+            self.sim_thread = threading.Thread(target=self._sim_worker, daemon=True)
+            self.sim_thread.start()
+        print(f"[*] Simulation mode \033[92mSTARTED\033[0m: Auto-broadcasting dummy GPS + condition every {self.sim_interval:.1f}s")
+        print(self._get_prompt(), end="", flush=True)
+
+    def stop_simulation(self):
+        """Stops periodic simulation."""
+        self.sim_enabled = False
+        print(f"[*] Simulation mode \033[91mSTOPPED\033[0m.")
+        print(self._get_prompt(), end="", flush=True)
 
     def _init_socket(self):
         """Initializes UDP Socket interface for GNU Radio gr-lora_sdr Socket PDU."""
@@ -332,7 +370,17 @@ class UnicastSDRChat:
 
         now_str = time.strftime("%H:%M:%S")
         target_str = "BROADCAST" if target == BROADCAST_ID else f"Node 0x{target:04X}"
-        print(f"\r\033[K[{now_str}] \033[93m[TX -> {target_str}]\033[0m: {text}", flush=True)
+        telem = TrainAISTelemetry.from_payload_string(text)
+        if telem:
+            print(
+                f"\r\033[K[{now_str}] \033[93m[TX AIS TELEMETRY -> {target_str}]\033[0m\n"
+                f"       Hex Raw: \033[90m{text}\033[0m\n"
+                f"       {telem.format_display()}",
+                flush=True,
+            )
+            print(self._get_prompt(), end="", flush=True)
+        else:
+            print(f"\r\033[K[{now_str}] \033[93m[TX -> {target_str}]\033[0m: {text}", flush=True)
 
     def _forward_relay(self, packet: MeshPacket):
         """Multi-hop Relay: Decrements TTL and re-broadcasts packet over RF asynchronously."""
@@ -372,34 +420,57 @@ class UnicastSDRChat:
 
         now_str = time.strftime("%H:%M:%S")
         corr_info = f" | {corr:.2f}" if corr is not None else ""
+        telem = TrainAISTelemetry.from_payload_string(packet.payload)
 
         # ======================================================================
         # RECEPTION FILTERING LOGIC
         # ======================================================================
         if packet.dst_id == self.node_id:
             # 1. DIRECT UNICAST FOR MY NODE
-            print(
-                f"\r\033[K[{now_str}] \033[92m[RX UNICAST from Node 0x{packet.src_id:04X}{corr_info}]\033[0m: {packet.payload}",
-                flush=True,
-            )
+            if telem:
+                print(
+                    f"\r\033[K[{now_str}] \033[92m[RX UNICAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
+                    f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
+                    f"       {telem.format_display()}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\r\033[K[{now_str}] \033[92m[RX UNICAST from Node 0x{packet.src_id:04X}{corr_info}]\033[0m: {packet.payload}",
+                    flush=True,
+                )
             print(self._get_prompt(), end="", flush=True)
 
         elif packet.dst_id == BROADCAST_ID:
             # 2. GLOBAL BROADCAST
-            print(
-                f"\r\033[K[{now_str}] \033[96m[RX BROADCAST from Node 0x{packet.src_id:04X}{corr_info}]\033[0m: {packet.payload}",
-                flush=True,
-            )
+            if telem:
+                print(
+                    f"\r\033[K[{now_str}] \033[96m[RX BROADCAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
+                    f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
+                    f"       {telem.format_display()}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\r\033[K[{now_str}] \033[96m[RX BROADCAST from Node 0x{packet.src_id:04X}{corr_info}]\033[0m: {packet.payload}",
+                    flush=True,
+                )
             print(self._get_prompt(), end="", flush=True)
             self._forward_relay(packet)
 
         else:
             # 3. PACKET FOR ANOTHER NODE (NOT ME)
             # Show operator that packet was physically received over RF but addressed elsewhere
-            print(
-                f"\r\033[K\033[90m[{now_str}] [OVERHEARD{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} (Private unicast - not for this node)\033[0m",
-                flush=True,
-            )
+            if telem:
+                print(
+                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD AIS TELEMETRY{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} | {telem.format_display()}\033[0m",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} (Private unicast - not for this node)\033[0m",
+                    flush=True,
+                )
             print(self._get_prompt(), end="", flush=True)
             self._forward_relay(packet)
 
@@ -462,17 +533,27 @@ class UnicastSDRChat:
         print(f" Default Target:   \033[93m{'BROADCAST' if self.target_id == BROADCAST_ID else hex(self.target_id)}\033[0m")
         print(f" Multi-Hop Relay:  \033[95m{'ENABLED' if self.enable_relay else 'DISABLED'}\033[0m")
         print(f" MAC Protocol:     \033[96m{self.mac.mode.value.upper()}\033[0m (Anti-Collision: LBT & S-TDMA Ready)")
+        sim_stat = f"\033[92mACTIVE (every {self.sim_interval:.1f}s)\033[0m" if self.sim_enabled else "\033[90mINACTIVE\033[0m"
+        print(f" GPS/Telem Sim:    {sim_stat}")
         if self.sdr_mode == "socket":
             print(f" Transport Mode:   UDP Socket PDU (RX Port {self.rx_port} | TX Port {self.tx_port})")
         else:
             print(f" Transport Mode:   Direct Pluto+ SDR at {self.uri} (915.000 MHz)")
         print("=" * 68)
         print("Commands:")
-        print("  /to <node_id>   : Switch target unicast destination (e.g. '/to 2' or '/to 0x0002')")
-        print("  /all            : Switch back to broadcast mode (0xFFFF)")
-        print("  /relay on|off   : Enable or disable multi-hop packet forwarding")
-        print("  /mac [mode]     : Show or switch MAC mode (lbt, slotted, stdma, off)")
-        print("  /exit           : Quit application\n")
+        print("  /to <node_id>      : Switch target unicast destination (e.g. '/to 2' or '/to 0x0002')")
+        print("  /all               : Switch back to broadcast mode (0xFFFF)")
+        print("  /relay on|off      : Enable or disable multi-hop packet forwarding")
+        print("  /mac [mode]        : Show or switch MAC mode (lbt, slotted, stdma, off)")
+        print("  /sim [on|off|once] : Start/stop/step dummy GPS & health telemetry broadcast")
+        print("  /sim brake [on|off]: Toggle train emergency brake condition")
+        print("  /sim status        : Display current telemetry condition & hex string")
+        print("  /exit              : Quit application\n")
+
+        if self.sim_enabled:
+            if self.sim_thread is None or not self.sim_thread.is_alive():
+                self.sim_thread = threading.Thread(target=self._sim_worker, daemon=True)
+                self.sim_thread.start()
 
         try:
             while self.running:
@@ -549,6 +630,36 @@ class UnicastSDRChat:
                         else:
                             print(f"[ERROR] Unknown MAC mode '{mode_str}'. Available: lbt, slotted, stdma, off")
                     print(f"[*] MAC Status: {self.mac.get_status_summary()}")
+                    continue
+                elif msg.startswith("/sim"):
+                    parts = msg.split()
+                    subcmd = parts[1].lower() if len(parts) > 1 else "status"
+                    if subcmd in ("on", "start", "enable"):
+                        interval = float(parts[2]) if len(parts) > 2 else self.sim_interval
+                        self.start_simulation(interval)
+                    elif subcmd in ("off", "stop", "disable"):
+                        self.stop_simulation()
+                    elif subcmd in ("once", "send", "step"):
+                        telem = self.simulator.step(dt=self.sim_interval)
+                        hex_payload = telem.to_hex_payload()
+                        self.send_message(hex_payload)
+                    elif subcmd == "brake":
+                        brake_state = True
+                        if len(parts) > 2 and parts[2].lower() in ("off", "release", "0", "false"):
+                            brake_state = False
+                        self.simulator.set_emergency_brake(brake_state)
+                        state_str = "\033[91mTRIGGERED (Active)\033[0m" if brake_state else "\033[92mRELEASED (Normal)\033[0m"
+                        print(f"[*] Emergency Brake status: {state_str}")
+                    elif subcmd == "status":
+                        curr = self.simulator.current_telemetry()
+                        print(
+                            f"[*] Simulation State:\n"
+                            f"    Active:   {'ENABLED' if self.sim_enabled else 'DISABLED'} (Interval: {self.sim_interval:.1f}s)\n"
+                            f"    {curr.format_display()}\n"
+                            f"    Hex Code: \033[90m{curr.to_hex_payload()}\033[0m"
+                        )
+                    else:
+                        print(f"[ERROR] Unknown /sim command. Use: /sim on [sec], /sim off, /sim once, /sim brake [on|off], /sim status")
                     continue
 
                 self.send_message(msg)
@@ -648,6 +759,18 @@ def main():
         choices=["lbt", "slotted", "stdma", "off"],
         help=f"MAC anti-collision mode (default from .env: {cfg.mac_mode})",
     )
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        default=None,
+        help="Enable simulation mode (auto-broadcast GPS + telemetry in hex)",
+    )
+    parser.add_argument(
+        "--sim-interval",
+        type=float,
+        default=cfg.sim_interval,
+        help=f"Simulation telemetry broadcast interval in seconds (default from .env: {cfg.sim_interval:.1f})",
+    )
     args = parser.parse_args()
 
     # Determine node_id and URI by merging CLI args, .env, and node aliases
@@ -677,6 +800,8 @@ def main():
     use_socket = args.socket if args.socket is not None else cfg.use_socket
     enable_relay = False if args.no_relay else cfg.enable_relay
     mac_mode = args.mac or cfg.mac_mode
+    sim_enabled = args.sim if args.sim is not None else cfg.sim_enabled
+    sim_interval = args.sim_interval if args.sim_interval is not None else cfg.sim_interval
 
     chat = UnicastSDRChat(
         node_id=node_id,
@@ -690,9 +815,12 @@ def main():
         tx_atten=args.tx_atten,
         enable_relay=enable_relay,
         mac_mode=mac_mode,
+        sim_enabled=sim_enabled,
+        sim_interval=sim_interval,
     )
     chat.run_cli()
 
 
 if __name__ == "__main__":
     main()
+

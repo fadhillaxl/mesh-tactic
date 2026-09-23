@@ -8,3 +8,6 @@ logs/
 build/
 dist/
 .env
+.env.*
+.env copy
+!.env.example

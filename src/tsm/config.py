@@ -140,6 +140,10 @@ class AppConfig:
     mqtt_broker: str
     mqtt_port: int
 
+    # AIS GPS Simulation Mode
+    sim_enabled: bool
+    sim_interval: float
+
     @classmethod
     def load(cls) -> "AppConfig":
         raw_uri = _get_str("SDR_URI", "auto")
@@ -178,6 +182,8 @@ class AppConfig:
             is_gateway=_get_bool("IS_GATEWAY", False),
             mqtt_broker=_get_str("MQTT_BROKER", "127.0.0.1"),
             mqtt_port=_get_int("MQTT_PORT", 1883),
+            sim_enabled=_get_bool("SIM_ENABLED", False),
+            sim_interval=_get_float("SIM_INTERVAL", 5.0),
         )
 
 
