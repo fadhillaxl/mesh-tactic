@@ -94,6 +94,10 @@ function initMap() {
   STATE.layers.tracks = L.layerGroup().addTo(STATE.map);
   STATE.layers.vectors = L.layerGroup().addTo(STATE.map);
 
+  // Dedicated Pane for Route Paths so RF telemetry links always render above tracks
+  const routePane = STATE.map.createPane("routePane");
+  routePane.style.zIndex = "450";
+
   // Add Gateway Station Marker (Stasiun Rendeh)
   renderGatewayMarker();
 
@@ -244,28 +248,79 @@ function updateTrainMarker(trainId, lat, lon, heading, speed, packet = null) {
   updateRoutePathLine(trainId, lat, lon, packet);
 }
 
+/**
+ * Calculates a curved path (quadratic Bezier) between two lat/lon points.
+ * Simulates atmospheric RF radio propagation arc and ensures lines never
+ * get buried underneath physical railway tracks.
+ */
+function computeCurvedPath(p1, p2, bend = 0.15, numPoints = 25) {
+  const [lat1, lon1] = p1;
+  const [lat2, lon2] = p2;
+
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  const dist = Math.hypot(dLat, dLon);
+
+  if (dist < 0.0001) return [p1, p2];
+
+  // Midpoint
+  const midLat = (lat1 + lat2) / 2;
+  const midLon = (lon1 + lon2) / 2;
+
+  // Perpendicular normal vector: (-dLon, dLat)
+  const normLat = -dLon / dist;
+  const normLon = dLat / dist;
+
+  // Control point displaced perpendicularly proportional to distance
+  const ctrlLat = midLat + normLat * dist * bend;
+  const ctrlLon = midLon + normLon * dist * bend;
+
+  const points = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const t = i / numPoints;
+    const inv = 1 - t;
+    const bLat = inv * inv * lat1 + 2 * inv * t * ctrlLat + t * t * lat2;
+    const bLon = inv * inv * lon1 + 2 * inv * t * ctrlLon + t * t * lon2;
+    points.push([bLat, bLon]);
+  }
+  return points;
+}
+
 function updateRoutePathLine(trainId, lat, lon, packet) {
-  const isAmber = trainId === "0x0003";
-  const pathColor = isAmber ? "#eab308" : "#0284c7";
   const isRelayed = Boolean(packet?.packet?.relayed || packet?.mesh_routing?.relayed);
 
-  let coords = [[lat, lon]];
-  let routeLabel = `Jalur Route Path: Train ${trainId} ➔ Gateway (Direct)`;
+  // High-contrast blue matching Legenda for direct RF telemetry link,
+  // or vibrant amber/orange when hopping through relay.
+  const pathColor = isRelayed ? "#f59e0b" : "#0284c7";
+  const gwPos = [STATE.gateway.lat, STATE.gateway.lon];
+  const trainPos = [lat, lon];
+
+  let curvedCoords = [];
+  let routeLabel = `Jalur Route Path: Train ${trainId} ➔ Gateway (Direct RF Link)`;
 
   if (isRelayed) {
     const relayId = trainId === "0x0003" ? "0x0002" : "0x0003";
     if (STATE.trains[relayId] && STATE.trains[relayId].lat && STATE.trains[relayId].lon) {
-      coords.push([STATE.trains[relayId].lat, STATE.trains[relayId].lon]);
+      const relayPos = [STATE.trains[relayId].lat, STATE.trains[relayId].lon];
+      const arc1 = computeCurvedPath(trainPos, relayPos, 0.12);
+      const arc2 = computeCurvedPath(relayPos, gwPos, -0.12);
+      curvedCoords = arc1.concat(arc2.slice(1));
       routeLabel = `Jalur Route Path (Hopping): Train ${trainId} ➔ Relay ${relayId} ➔ Gateway (1 Hop)`;
+    } else {
+      curvedCoords = computeCurvedPath(trainPos, gwPos, trainId === "0x0003" ? 0.20 : 0.10);
     }
+  } else {
+    // Bend outward so RF beam arches cleanly above the physical ground railway track
+    const bendFactor = trainId === "0x0003" ? 0.20 : 0.10;
+    curvedCoords = computeCurvedPath(trainPos, gwPos, bendFactor);
   }
-  coords.push([STATE.gateway.lat, STATE.gateway.lon]);
 
   if (!STATE.layers.vectorLines[trainId]) {
-    STATE.layers.vectorLines[trainId] = L.polyline(coords, {
-      color: isRelayed ? "#f59e0b" : pathColor,
-      weight: isRelayed ? 2.5 : 2.0,
-      opacity: 0.8,
+    STATE.layers.vectorLines[trainId] = L.polyline(curvedCoords, {
+      pane: "routePane",
+      color: pathColor,
+      weight: 3.0,
+      opacity: 0.95,
       dashArray: isRelayed ? "4, 6" : "6, 6",
     }).addTo(STATE.layers.vectors);
 
@@ -274,10 +329,11 @@ function updateRoutePathLine(trainId, lat, lon, packet) {
       className: "tactical-tooltip",
     });
   } else {
-    STATE.layers.vectorLines[trainId].setLatLngs(coords);
+    STATE.layers.vectorLines[trainId].setLatLngs(curvedCoords);
     STATE.layers.vectorLines[trainId].setStyle({
-      color: isRelayed ? "#f59e0b" : pathColor,
-      weight: isRelayed ? 2.5 : 2.0,
+      color: pathColor,
+      weight: 3.0,
+      opacity: 0.95,
       dashArray: isRelayed ? "4, 6" : "6, 6",
     });
     STATE.layers.vectorLines[trainId].setTooltipContent(routeLabel);
