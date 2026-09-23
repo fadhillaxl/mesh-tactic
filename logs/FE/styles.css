@@ -559,6 +559,20 @@ body.clean-theme {
   background: repeating-linear-gradient(90deg, #0284c7, #0284c7 4px, transparent 4px, transparent 8px);
   height: 3px;
 }
+.bg-corridor-ref {
+  background: repeating-linear-gradient(90deg, #94a3b8, #94a3b8 4px, transparent 4px, transparent 8px);
+  height: 2px;
+}
+
+.legenda-marker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #ffffff;
+  display: inline-block;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+  flex-shrink: 0;
+}
 
 .legenda-marker-circle {
   width: 10px;

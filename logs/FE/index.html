@@ -1,21 +1,26 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>168Railway AIS // Live Train Tracking Platform</title>
-  
+  <title>Railway AIS // Live Train Tracking Platform</title>
+
   <!-- Google Fonts: Inter, Outfit, JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@500;600;700;800&display=swap"
+    rel="stylesheet">
 
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-  
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
   <!-- Custom Modern Minimalist Stylesheet -->
   <link rel="stylesheet" href="styles.css">
 </head>
+
 <body class="clean-theme">
 
   <!-- ====================================================================== -->
@@ -26,7 +31,8 @@
       <!-- 168Railway / AIS Brand Logo -->
       <a href="#" class="brand-logo">
         <div class="brand-icon-box">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
             <rect x="4" y="3" width="16" height="16" rx="3"></rect>
             <path d="M4 11h16"></path>
             <circle cx="8" cy="15" r="1.5" fill="currentColor"></circle>
@@ -97,11 +103,11 @@
 
     <!-- Top-Right Floating Clock & Train Counter Widget -->
     <div class="floating-top-right-widget">
-      <div class="live-clock-display" id="clock-display">21:26:05</div>
+      <div class="live-clock-display" id="clock-display">--:--:--</div>
       <div class="clock-divider"></div>
       <div class="live-train-counter">
         <span class="train-pulse-dot"></span>
-        <span id="trains-active-count">2 trains</span>
+        <span id="trains-active-count">0 trains</span>
       </div>
       <div class="map-layer-selector" title="Ganti jenis peta satelit / jalan">
         <button class="btn-layer-dropdown" id="btn-toggle-basemap">
@@ -138,7 +144,7 @@
           </svg>
         </span>
         <span class="pill-label">Dinasan</span>
-        <span class="pill-badge badge-green" id="sidebar-badge-trains">2</span>
+        <span class="pill-badge badge-green" id="sidebar-badge-trains">0</span>
       </button>
 
       <div class="sidebar-pill-widget" id="sidebar-btn-legenda">
@@ -154,11 +160,16 @@
 
       <!-- Expandable Legenda Box -->
       <div class="legenda-dropdown-panel" id="legenda-panel">
-        <div class="legenda-row"><span class="legenda-color bg-cyan"></span> Track Kereta 0x0002 (Gambir - Bandung)</div>
-        <div class="legenda-row"><span class="legenda-color bg-amber"></span> Track Kereta 0x0003 (Rendeh - Bandung)</div>
-        <div class="legenda-row"><span class="legenda-color bg-route-dashed"></span> Jalur Route Path (RF Telemetri Link ke Gateway)</div>
-        <div class="legenda-row"><span class="legenda-marker-circle bg-station"></span> Gateway Stasiun Rendeh (Titik Tengah)</div>
-        <div class="legenda-row"><span class="legenda-marker-circle bg-train-blue"></span> Lokasi Kereta Aktif</div>
+        <div id="legenda-trains-list" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Dynamically populated per active train -->
+        </div>
+        <div class="legenda-row"><span class="legenda-color bg-route-dashed"></span> Jalur Route Path (RF Telemetri Link
+          ke Gateway)</div>
+        <div class="legenda-row"><span class="legenda-color bg-corridor-ref"></span> Koridor Rel Fisik (Referensi)</div>
+        <div class="legenda-row"><span class="legenda-marker-circle bg-station"></span> Gateway Stasiun Rendeh (Titik
+          Tengah)</div>
+        <div class="legenda-row"><span class="legenda-marker-circle bg-train-blue"></span> Posisi Terkini Kereta Aktif
+        </div>
       </div>
     </aside>
 
@@ -253,7 +264,7 @@
 
           <button class="drawer-btn-export" id="btn-drawer-export">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
             </svg>
             Export JSON
           </button>
@@ -306,8 +317,10 @@
   </div>
 
   <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <!-- Application Client Logic -->
   <script src="app.js"></script>
 </body>
+
 </html>

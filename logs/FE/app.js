@@ -23,13 +23,16 @@ const STATE = {
   activeBasemap: "satellite", // "satellite" or "dark"
   baseLayers: {},
   layers: {
+    corridors: null,
     tracks: null,
+    points: {},
     vectors: null,
     station: null,
     trains: {},
     trails: {},
     vectorLines: {},
   },
+  trainPointHistory: {},
 };
 
 const ROUTE_NAMES = {
@@ -37,6 +40,26 @@ const ROUTE_NAMES = {
   "0x0003": "Stasiun Rendeh → Bandung (Segmen 2)",
   "DEFAULT": "Rute Kereta Api Lintas Jawa",
 };
+
+const TRAIN_PALETTE = [
+  { hex: "#0284c7", badgeClass: "row-node-blue" },
+  { hex: "#f59e0b", badgeClass: "row-node-amber" },
+  { hex: "#10b981", badgeClass: "row-node-green" },
+  { hex: "#8b5cf6", badgeClass: "row-node-purple" },
+  { hex: "#ec4899", badgeClass: "row-node-pink" },
+  { hex: "#06b6d4", badgeClass: "row-node-teal" },
+];
+
+function getTrainColor(trainId) {
+  if (trainId === "0x0002") return TRAIN_PALETTE[0];
+  if (trainId === "0x0003") return TRAIN_PALETTE[1];
+  let hash = 0;
+  for (let i = 0; i < trainId.length; i++) {
+    hash = (hash * 31 + trainId.charCodeAt(i)) & 0xffffffff;
+  }
+  const idx = Math.abs(hash) % TRAIN_PALETTE.length;
+  return TRAIN_PALETTE[idx];
+}
 
 // ==============================================================================
 // 2. INITIALIZATION
@@ -91,6 +114,7 @@ function initMap() {
   STATE.baseLayers.satellite.addTo(STATE.map);
 
   // Layer groups
+  STATE.layers.corridors = L.layerGroup().addTo(STATE.map);
   STATE.layers.tracks = L.layerGroup().addTo(STATE.map);
   STATE.layers.vectors = L.layerGroup().addTo(STATE.map);
 
@@ -98,10 +122,14 @@ function initMap() {
   const routePane = STATE.map.createPane("routePane");
   routePane.style.zIndex = "450";
 
+  // Dedicated Pane for Dynamic Waypoint Dots & Progressive Trails
+  const dynamicTrackPane = STATE.map.createPane("dynamicTrackPane");
+  dynamicTrackPane.style.zIndex = "440";
+
   // Add Gateway Station Marker (Stasiun Rendeh)
   renderGatewayMarker();
 
-  // Load Railway Track Corridors from GeoJSON
+  // Load Railway Track Corridors from GeoJSON (as clean background reference)
   loadRailwayCorridors();
 }
 
@@ -138,46 +166,45 @@ function renderGatewayMarker() {
 
 async function loadRailwayCorridors() {
   try {
-    // 1. Load Track Kereta 0x0002 (Gambir - Bandung)
-    // Filter out Whoosh (High Speed Rail) so only the active train track is shown
+    // 1. Load Track Koridor Konvensional (Gambir - Bandung)
     const res1 = await fetch("/api/geojson/jalur_kereta_jakarta_bandung.json");
     if (res1.ok) {
       const geo1 = await res1.json();
       L.geoJSON(geo1, {
         filter: (feature) => feature.properties?.type !== "High Speed Rail",
         style: () => ({
-          color: "#38bdf8",
-          weight: 4,
-          opacity: 0.9,
-          dashArray: "6, 4",
+          color: "#94a3b8",
+          weight: 2.5,
+          opacity: 0.35,
+          dashArray: "4, 4",
         }),
         onEachFeature: (feature, layer) => {
-          layer.bindTooltip("Track Kereta 0x0002 (Gambir - Bandung)", {
+          layer.bindTooltip("Koridor Rel Fisik: Jakarta - Bandung (Referensi Jalur)", {
             sticky: true,
             className: "tactical-tooltip",
           });
         },
-      }).addTo(STATE.layers.tracks);
+      }).addTo(STATE.layers.corridors);
     }
 
-    // 2. Load Track Kereta 0x0003: Segmen 2 (Titik Tengah ke Bandung)
+    // 2. Load Track Segmen 2 (Titik Tengah ke Bandung)
     const res2 = await fetch("/api/geojson/tengah_bandung_ke_bandung.json");
     if (res2.ok) {
       const geo2 = await res2.json();
       L.geoJSON(geo2, {
         style: () => ({
-          color: "#facc15",
-          weight: 4,
-          opacity: 0.9,
-          dashArray: "6, 6",
+          color: "#94a3b8",
+          weight: 2.5,
+          opacity: 0.35,
+          dashArray: "4, 4",
         }),
         onEachFeature: (feature, layer) => {
-          layer.bindTooltip("Track Kereta 0x0003 (Stasiun Rendeh - Bandung)", {
+          layer.bindTooltip("Koridor Rel Fisik: Rendeh - Bandung (Referensi Jalur)", {
             sticky: true,
             className: "tactical-tooltip",
           });
         },
-      }).addTo(STATE.layers.tracks);
+      }).addTo(STATE.layers.corridors);
     }
   } catch (err) {
     console.warn("[WARN] Could not load GeoJSON tracks from server:", err);
@@ -185,16 +212,103 @@ async function loadRailwayCorridors() {
 }
 
 // ==============================================================================
-// 4. CIRCULAR BLUE LOCATION MARKERS & ROUTE PATH
+// 4. CIRCULAR BLUE LOCATION MARKERS & DYNAMIC WAYPOINT DOTS
 // ==============================================================================
+/**
+ * Automatically records GPS telemetry points (titik-titik lintasan) dynamically
+ * as the train moves, creating interactive dots and a progressive real-time polyline.
+ */
+function addTrainWaypointDot(trainId, lat, lon, packet) {
+  if (!lat || !lon) return;
+
+  const color = getTrainColor(trainId);
+  const telem = packet?.telemetry || {};
+  const speed = telem.motion?.speed_kmh || 0;
+  const heading = telem.motion?.heading_deg || 0;
+  const timeStr = (packet?.received_time_iso || "").substring(11, 19) || new Date().toISOString().substring(11, 19);
+
+  // 1. LayerGroup for individual dots
+  if (!STATE.layers.points[trainId]) {
+    STATE.layers.points[trainId] = L.layerGroup().addTo(STATE.map);
+  }
+
+  // 2. Progressive Polyline Trail connecting the dots
+  if (!STATE.layers.trails[trainId]) {
+    STATE.layers.trails[trainId] = L.polyline([[lat, lon]], {
+      pane: "dynamicTrackPane",
+      color: color.hex,
+      weight: 3.5,
+      opacity: 0.95,
+    }).addTo(STATE.map);
+  } else {
+    const latlngs = STATE.layers.trails[trainId].getLatLngs();
+    const last = latlngs[latlngs.length - 1];
+    // Check if new position has moved sufficiently to avoid redundant duplicate points
+    if (!last || Math.abs(last.lat - lat) > 0.00003 || Math.abs(last.lng - lon) > 0.00003) {
+      latlngs.push([lat, lon]);
+      if (latlngs.length > 400) latlngs.shift();
+      STATE.layers.trails[trainId].setLatLngs(latlngs);
+    }
+  }
+
+  // 3. Add individual Dot (CircleMarker)
+  if (!STATE.trainPointHistory[trainId]) STATE.trainPointHistory[trainId] = [];
+
+  const hist = STATE.trainPointHistory[trainId];
+  const lastPoint = hist[hist.length - 1];
+
+  // Only add a new visual dot if distance moved is > ~15-20 meters (approx 0.00015 deg) or first point
+  const distDelta = lastPoint ? Math.hypot(lat - lastPoint.lat, lon - lastPoint.lon) : 1;
+  if (!lastPoint || distDelta > 0.00015) {
+    const dot = L.circleMarker([lat, lon], {
+      pane: "dynamicTrackPane",
+      radius: 4.5,
+      fillColor: color.hex,
+      color: "#ffffff",
+      weight: 1.5,
+      opacity: 0.95,
+      fillOpacity: 0.9,
+    });
+
+    dot.bindTooltip(`
+      <div style="font-family: 'Inter', sans-serif; font-size: 11px; color: #0f172a; min-width: 150px;">
+        <div style="font-weight: 800; color: ${color.hex}; font-size: 12px; margin-bottom: 2px;">
+          Titik Telemetri Kereta ${trainId}
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 2px; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 10px;">
+          <div><strong>Waktu:</strong> ${timeStr} UTC</div>
+          <div><strong>Kecepatan:</strong> ${speed.toFixed(1)} km/h</div>
+          <div><strong>Arah Haluan:</strong> ${heading.toFixed(1)}°</div>
+          <div><strong>GPS:</strong> ${lat.toFixed(5)}, ${lon.toFixed(5)}</div>
+        </div>
+      </div>
+    `, {
+      sticky: true,
+      className: "tactical-tooltip",
+    });
+
+    dot.addTo(STATE.layers.points[trainId]);
+    hist.push({ lat, lon, marker: dot });
+
+    // Keep up to 200 visual dots per train to maintain high performance
+    if (hist.length > 200) {
+      const oldest = hist.shift();
+      if (oldest?.marker) {
+        STATE.layers.points[trainId].removeLayer(oldest.marker);
+      }
+    }
+  }
+}
+
 function updateTrainMarker(trainId, lat, lon, heading, speed, packet = null) {
+  const trainColor = getTrainColor(trainId);
   const isAmber = trainId === "0x0003";
   const markerClass = isAmber ? "circular-blue-train-marker amber-train" : "circular-blue-train-marker";
-  const trailColor = isAmber ? "#eab308" : "#0284c7";
+  const customBgStyle = (!isAmber && trainId !== "0x0002") ? `style="background: ${trainColor.hex};"` : "";
 
   // 1. Circular Blue Location Marker with Train Silhouette Icon
   const markerHtml = `
-    <div class="${markerClass}" title="Train ${trainId} (${speed} km/h)">
+    <div class="${markerClass}" ${customBgStyle} title="Train ${trainId} (${speed} km/h)">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="4" y="3" width="16" height="16" rx="3"></rect>
         <path d="M4 11h16"></path>
@@ -215,7 +329,7 @@ function updateTrainMarker(trainId, lat, lon, heading, speed, packet = null) {
   const popupContent = `
     <div style="font-family: 'Inter', sans-serif; font-size: 12px; color: #0f172a; min-width: 190px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-        <strong style="color: ${trailColor}; font-size: 13px;">Train ${trainId}</strong>
+        <strong style="color: ${trainColor.hex}; font-size: 13px;">Train ${trainId}</strong>
         <span style="background: #dcfce7; color: #15803d; font-weight: 700; font-size: 10px; padding: 2px 6px; border-radius: 9999px;">ON TRACK</span>
       </div>
       <div style="color: #64748b; font-size: 11px; margin-bottom: 8px;">
@@ -244,7 +358,10 @@ function updateTrainMarker(trainId, lat, lon, heading, speed, packet = null) {
     STATE.layers.trains[trainId].setTooltipContent(`<strong>Train ${trainId}</strong> • ${speed.toFixed(0)} km/h`);
   }
 
-  // 2. Jalur Route Path (RF Telemetri Link ke Gateway / Hopping)
+  // 2. Auto nambah titik telemetri dan track dinamis (jangan static)
+  addTrainWaypointDot(trainId, lat, lon, packet);
+
+  // 3. Jalur Route Path (RF Telemetri Link ke Gateway / Hopping)
   updateRoutePathLine(trainId, lat, lon, packet);
 }
 
@@ -492,6 +609,45 @@ function updateBadgesAndCounters() {
 
   if (badgeEvents) badgeEvents.innerText = packetCount;
   if (sidebarPackets) sidebarPackets.innerText = packetCount;
+
+  updateLegendaPanel();
+  updateTrainFilterOptions();
+}
+
+function updateLegendaPanel() {
+  const container = document.getElementById("legenda-trains-list");
+  if (!container) return;
+
+  const tids = Object.keys(STATE.trains);
+  if (tids.length === 0) {
+    container.innerHTML = `<div class="legenda-row" style="color: #94a3b8; font-size: 11px;">Menunggu titik telemetri armada...</div>`;
+    return;
+  }
+
+  container.innerHTML = tids.map((tid) => {
+    const color = getTrainColor(tid);
+    return `
+      <div class="legenda-row">
+        <span class="legenda-marker-dot" style="background: ${color.hex};"></span>
+        <span class="legenda-color" style="background: ${color.hex};"></span>
+        <span>Titik & Track Kereta ${tid}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function updateTrainFilterOptions() {
+  const select = document.getElementById("filter-train-drawer");
+  if (!select) return;
+
+  const currentVal = select.value;
+  const tids = Object.keys(STATE.trains);
+
+  let html = `<option value="ALL">Semua Kereta</option>`;
+  tids.forEach((tid) => {
+    html += `<option value="${tid}" ${tid === currentVal ? "selected" : ""}>Train ${tid}</option>`;
+  });
+  select.innerHTML = html;
 }
 
 function renderActiveJourneysCard() {
@@ -512,8 +668,8 @@ function renderActiveJourneysCard() {
 
   trainKeys.forEach((tid) => {
     const t = STATE.trains[tid];
-    const isAmber = tid === "0x0003";
-    const dotClass = isAmber ? "dot-amber-journey" : "dot-blue-journey";
+    const color = getTrainColor(tid);
+    const dotStyle = `background: ${color.hex};`;
     const route = ROUTE_NAMES[tid] || ROUTE_NAMES["DEFAULT"];
     const isEmerg = t.health?.is_emergency;
     const timeShort = t.received_time ? t.received_time.substring(11, 19) : "--:--:--";
@@ -524,7 +680,7 @@ function renderActiveJourneysCard() {
       <div class="journey-header">
         <div>
           <div class="journey-train-title">
-            <span class="journey-indicator-dot ${dotClass}"></span>
+            <span class="journey-indicator-dot" style="${dotStyle}"></span>
             <span>Train ${tid}</span>
           </div>
           <div class="journey-route-text">${route}</div>
@@ -541,7 +697,7 @@ function renderActiveJourneysCard() {
         </div>
         <div class="metric-col">
           <span class="m-label">JARAK KE GATEWAY</span>
-          <span class="m-val" style="color: ${isAmber ? '#b45309' : '#0284c7'};">
+          <span class="m-val" style="color: ${color.hex};">
             ${t.dist_gw.toFixed(1)} <span>km</span>
           </span>
         </div>
@@ -583,7 +739,9 @@ function appendDrawerTableRow(packet, isLive = true) {
   if (isLive) row.className = "new-row";
 
   const timeStr = (packet.received_time_iso || "").substring(11, 19) || "--:--:--";
-  const nodeClass = tid === "0x0002" ? "row-node-blue" : (tid === "0x0003" ? "row-node-amber" : "");
+  const color = getTrainColor(tid);
+  const nodeClass = color.badgeClass || (tid === "0x0002" ? "row-node-blue" : (tid === "0x0003" ? "row-node-amber" : ""));
+  const nodeStyle = color.badgeClass ? "" : `style="color: ${color.hex}; font-weight: 700;"`;
   const isEmerg = telem.device_health?.is_emergency;
   const isRelayed = Boolean(packet.packet?.relayed || packet.mesh_routing?.relayed);
   const routeStr = packet.packet?.route_str || packet.mesh_routing?.route_str || (isRelayed ? `${tid} ➔ 0x0002 ➔ GW` : `${tid} ➔ GW`);
@@ -593,7 +751,7 @@ function appendDrawerTableRow(packet, isLive = true) {
 
   row.innerHTML = `
     <td>${timeStr}</td>
-    <td class="${nodeClass}">${tid}</td>
+    <td class="${nodeClass}" ${nodeStyle}>${tid}</td>
     <td>${(telem.gps?.latitude || 0).toFixed(5)}, ${(telem.gps?.longitude || 0).toFixed(5)}</td>
     <td><strong>${(gw.distance_to_train_km || 0).toFixed(1)} km</strong></td>
     <td>${(telem.motion?.speed_kmh || 0).toFixed(1)} km/h</td>
