@@ -135,10 +135,15 @@ class AppConfig:
     socket_tx_port: int
     socket_rx_port: int
 
-    # Railway AIS & Gateway
+    # Railway AIS & Gateway Station
     is_gateway: bool
-    mqtt_broker: str
-    mqtt_port: int
+    gateway_station_name: str
+    gateway_log_file: str
+    gateway_log_enabled: bool
+    gateway_mqtt_enabled: bool
+    gateway_mqtt_broker: str
+    gateway_mqtt_port: int
+    gateway_mqtt_topic: str
 
     # AIS GPS Simulation Mode
     sim_enabled: bool
@@ -180,8 +185,13 @@ class AppConfig:
             socket_tx_port=_get_int("SOCKET_TX_PORT", 52001),
             socket_rx_port=_get_int("SOCKET_RX_PORT", 52002),
             is_gateway=_get_bool("IS_GATEWAY", False),
-            mqtt_broker=_get_str("MQTT_BROKER", "127.0.0.1"),
-            mqtt_port=_get_int("MQTT_PORT", 1883),
+            gateway_station_name=_get_str("GATEWAY_STATION_NAME", "Stasiun Central (Macbook Gateway)"),
+            gateway_log_file=_get_str("GATEWAY_LOG_FILE", "logs/gateway_telemetry.jsonl"),
+            gateway_log_enabled=_get_bool("GATEWAY_LOG_ENABLED", True),
+            gateway_mqtt_enabled=_get_bool("GATEWAY_MQTT_ENABLED", False),
+            gateway_mqtt_broker=_get_str("GATEWAY_MQTT_BROKER", _get_str("MQTT_BROKER", "127.0.0.1")),
+            gateway_mqtt_port=_get_int("GATEWAY_MQTT_PORT", _get_int("MQTT_PORT", 1883)),
+            gateway_mqtt_topic=_get_str("GATEWAY_MQTT_TOPIC", "railway/telemetry"),
             sim_enabled=_get_bool("SIM_ENABLED", False),
             sim_interval=_get_float("SIM_INTERVAL", 5.0),
         )

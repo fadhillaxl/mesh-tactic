@@ -54,6 +54,7 @@ from tsm.telemetry import (
     DummyGPSSimulator,
     HEX_PREFIX,
 )
+from tsm.gateway import RailwayAISGateway
 
 try:
     import iio
@@ -196,6 +197,14 @@ class UnicastSDRChat:
         mac_mode: str = "lbt",
         sim_enabled: bool = False,
         sim_interval: float = 5.0,
+        is_gateway: bool = False,
+        gateway_station_name: str = "Stasiun Central (Macbook Gateway)",
+        gateway_log_file: str = "logs/gateway_telemetry.jsonl",
+        gateway_log_enabled: bool = True,
+        gateway_mqtt_enabled: bool = False,
+        gateway_mqtt_broker: str = "127.0.0.1",
+        gateway_mqtt_port: int = 1883,
+        gateway_mqtt_topic: str = "railway/telemetry",
     ):
         self.node_id = node_id & 0xFFFF
         self.target_id = target_id & 0xFFFF
@@ -216,6 +225,21 @@ class UnicastSDRChat:
         self.seen_messages: Dict[Tuple[int, int], float] = {}
         self.lock = threading.Lock()
         self.last_tx_time = 0.0
+
+        # Initialize Railway AIS Station Gateway
+        self.is_gateway = is_gateway
+        self.gateway: Optional[RailwayAISGateway] = None
+        if self.is_gateway:
+            self.gateway = RailwayAISGateway(
+                node_id=self.node_id,
+                station_name=gateway_station_name,
+                log_enabled=gateway_log_enabled,
+                log_file=gateway_log_file,
+                mqtt_enabled=gateway_mqtt_enabled,
+                mqtt_broker=gateway_mqtt_broker,
+                mqtt_port=gateway_mqtt_port,
+                mqtt_topic=gateway_mqtt_topic,
+            )
 
         # Initialize Tactical MAC Layer (LBT / Slotted / S-TDMA)
         try:
@@ -421,6 +445,10 @@ class UnicastSDRChat:
         now_str = time.strftime("%H:%M:%S")
         corr_info = f" | {corr:.2f}" if corr is not None else ""
         telem = TrainAISTelemetry.from_payload_string(packet.payload)
+        gw_note = ""
+        if telem and self.gateway:
+            self.gateway.ingest(packet, telem, corr=corr)
+            gw_note = f"\n       \033[94m[GATEWAY INGEST]\033[0m Logged -> {self.gateway.log_path.name}"
 
         # ======================================================================
         # RECEPTION FILTERING LOGIC
@@ -431,7 +459,7 @@ class UnicastSDRChat:
                 print(
                     f"\r\033[K[{now_str}] \033[92m[RX UNICAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
                     f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
-                    f"       {telem.format_display()}",
+                    f"       {telem.format_display()}{gw_note}",
                     flush=True,
                 )
             else:
@@ -447,7 +475,7 @@ class UnicastSDRChat:
                 print(
                     f"\r\033[K[{now_str}] \033[96m[RX BROADCAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
                     f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
-                    f"       {telem.format_display()}",
+                    f"       {telem.format_display()}{gw_note}",
                     flush=True,
                 )
             else:
@@ -463,7 +491,7 @@ class UnicastSDRChat:
             # Show operator that packet was physically received over RF but addressed elsewhere
             if telem:
                 print(
-                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD AIS TELEMETRY{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} | {telem.format_display()}\033[0m",
+                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD AIS TELEMETRY{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} | {telem.format_display()}{gw_note}\033[0m",
                     flush=True,
                 )
             else:
@@ -535,6 +563,11 @@ class UnicastSDRChat:
         print(f" MAC Protocol:     \033[96m{self.mac.mode.value.upper()}\033[0m (Anti-Collision: LBT & S-TDMA Ready)")
         sim_stat = f"\033[92mACTIVE (every {self.sim_interval:.1f}s)\033[0m" if self.sim_enabled else "\033[90mINACTIVE\033[0m"
         print(f" GPS/Telem Sim:    {sim_stat}")
+        if self.is_gateway and self.gateway:
+            print(f" Gateway Station:  \033[94mACTIVE - {self.gateway.station_name}\033[0m")
+            print(f" Telemetry Uplink: \033[92mLOG ONLY\033[0m ({self.gateway.log_path.name}) [MQTT: Standby]")
+        else:
+            print(f" Gateway Station:  \033[90mDISABLED (Standard Node)\033[0m")
         if self.sdr_mode == "socket":
             print(f" Transport Mode:   UDP Socket PDU (RX Port {self.rx_port} | TX Port {self.tx_port})")
         else:
@@ -548,6 +581,9 @@ class UnicastSDRChat:
         print("  /sim [on|off|once] : Start/stop/step dummy GPS & health telemetry broadcast")
         print("  /sim brake [on|off]: Toggle train emergency brake condition")
         print("  /sim status        : Display current telemetry condition & hex string")
+        if self.is_gateway:
+            print("  /gw status         : Show gateway ingestion statistics & tracked trains")
+            print("  /gw log [n]        : View last N lines of logged telemetry JSON")
         print("  /exit              : Quit application\n")
 
         if self.sim_enabled:
@@ -661,11 +697,47 @@ class UnicastSDRChat:
                     else:
                         print(f"[ERROR] Unknown /sim command. Use: /sim on [sec], /sim off, /sim once, /sim brake [on|off], /sim status")
                     continue
+                elif msg.startswith("/gw") or msg.startswith("/gateway"):
+                    if not self.gateway:
+                        print("[*] Gateway mode is not enabled on this node (Set IS_GATEWAY=true in .env or run with --gateway)")
+                        continue
+                    parts = msg.split()
+                    subcmd = parts[1].lower() if len(parts) > 1 else "status"
+                    if subcmd in ("status", "info"):
+                        print(f"[*] {self.gateway.get_status_summary()}")
+                        tracked = self.gateway.get_tracked_trains()
+                        if tracked:
+                            print("[*] Active Tracked Trains:")
+                            for tid, info in tracked.items():
+                                gps = info.get("gps", {})
+                                mot = info.get("motion", {})
+                                hlth = info.get("device_health", {})
+                                print(
+                                    f"    Train {info.get('train_id')} @ ({gps.get('latitude')}, {gps.get('longitude')}) | "
+                                    f"Spd: {mot.get('speed_kmh')} km/h | Bat: {hlth.get('battery_v')}V | "
+                                    f"Packets: {info.get('total_packets')} | Last Seen: {info.get('last_seen_iso')}"
+                                )
+                        else:
+                            print("    (No train packets ingested yet)")
+                    elif subcmd in ("log", "logs", "cat"):
+                        n = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 5
+                        logs = self.gateway.get_recent_logs(max_lines=n)
+                        if logs:
+                            print(f"[*] Last {len(logs)} Telemetry Records in {self.gateway.log_path.name}:")
+                            for line in logs:
+                                print(f"    \033[90m{line}\033[0m")
+                        else:
+                            print(f"[*] No logs found in {self.gateway.log_path}")
+                    else:
+                        print("[ERROR] Unknown /gw command. Use: /gw status, /gw log [n]")
+                    continue
 
                 self.send_message(msg)
 
         finally:
             self.running = False
+            if self.gateway:
+                self.gateway.close()
             if self.sdr_mode == "socket":
                 self.sock.close()
             print("\n[*] Tactical Unicast Chat terminated. 73!")
@@ -771,6 +843,22 @@ def main():
         default=cfg.sim_interval,
         help=f"Simulation telemetry broadcast interval in seconds (default from .env: {cfg.sim_interval:.1f})",
     )
+    parser.add_argument(
+        "--gateway",
+        action="store_true",
+        default=None,
+        help="Enable Railway AIS Gateway mode (ingest and log telemetry)",
+    )
+    parser.add_argument(
+        "--station",
+        default="",
+        help=f"Gateway station name (default from .env: {cfg.gateway_station_name})",
+    )
+    parser.add_argument(
+        "--gateway-log",
+        default="",
+        help=f"Gateway JSONL log file (default from .env: {cfg.gateway_log_file})",
+    )
     args = parser.parse_args()
 
     # Determine node_id and URI by merging CLI args, .env, and node aliases
@@ -803,6 +891,10 @@ def main():
     sim_enabled = args.sim if args.sim is not None else cfg.sim_enabled
     sim_interval = args.sim_interval if args.sim_interval is not None else cfg.sim_interval
 
+    is_gateway = args.gateway if args.gateway is not None else cfg.is_gateway
+    station_name = args.station or cfg.gateway_station_name
+    gateway_log = args.gateway_log or cfg.gateway_log_file
+
     chat = UnicastSDRChat(
         node_id=node_id,
         target_id=target_id,
@@ -817,6 +909,14 @@ def main():
         mac_mode=mac_mode,
         sim_enabled=sim_enabled,
         sim_interval=sim_interval,
+        is_gateway=is_gateway,
+        gateway_station_name=station_name,
+        gateway_log_file=gateway_log,
+        gateway_log_enabled=cfg.gateway_log_enabled,
+        gateway_mqtt_enabled=cfg.gateway_mqtt_enabled,
+        gateway_mqtt_broker=cfg.gateway_mqtt_broker,
+        gateway_mqtt_port=cfg.gateway_mqtt_port,
+        gateway_mqtt_topic=cfg.gateway_mqtt_topic,
     )
     chat.run_cli()
 

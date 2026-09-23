@@ -66,6 +66,25 @@ class DeviceCondition:
 
         return " | ".join(parts)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "battery_mv": self.battery_mv,
+            "battery_v": round(self.battery_volts, 2),
+            "temperature_c": self.temperature_c,
+            "cpu_load_pct": self.cpu_load_pct,
+            "is_emergency": self.is_emergency,
+            "status_summary": self.status_summary(),
+            "flags_hex": f"0x{self.flags:04X}",
+            "flags": {
+                "gps_locked": bool(self.flags & FLAG_GPS_LOCKED),
+                "engine_active": bool(self.flags & FLAG_ENGINE_ACTIVE),
+                "emergency_brake": bool(self.flags & FLAG_EMERGENCY_BRAKE),
+                "doors_locked": bool(self.flags & FLAG_DOORS_LOCKED),
+                "sdr_healthy": bool(self.flags & FLAG_SDR_HEALTHY),
+                "station_docked": bool(self.flags & FLAG_STATION_DOCKED),
+            },
+        }
+
 
 @dataclass
 class TrainAISTelemetry:
@@ -76,6 +95,23 @@ class TrainAISTelemetry:
     speed_kmh: float
     heading_deg: float
     condition: DeviceCondition
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "train_id": f"0x{self.train_id:04X}",
+            "train_id_int": self.train_id,
+            "timestamp": self.timestamp,
+            "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.timestamp)),
+            "gps": {
+                "latitude": round(self.latitude, 6),
+                "longitude": round(self.longitude, 6),
+            },
+            "motion": {
+                "speed_kmh": round(self.speed_kmh, 1),
+                "heading_deg": round(self.heading_deg, 1),
+            },
+            "device_health": self.condition.to_dict(),
+        }
 
     def pack_binary(self) -> bytes:
         """Serializes telemetry into compact 25-byte binary struct."""
