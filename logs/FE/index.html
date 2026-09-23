@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tactical Railway AIS // Mission Control</title>
+  
+  <!-- Google Fonts: Inter, Outfit, JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <!-- Custom Tactical Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="tactical-hud">
+
+  <!-- ====================================================================== -->
+  <!-- 1. TOP TACTICAL NAVIGATION BAR & HUD HEADER                            -->
+  <!-- ====================================================================== -->
+  <header class="hud-header">
+    <div class="header-left">
+      <div class="radar-pulse-ring"></div>
+      <div class="brand-titles">
+        <div class="brand-badge"><span class="badge-dot"></span> LIVE SDR RF AIS STREAM</div>
+        <h1 class="brand-main">TACTICAL RAILWAY AIS <span class="brand-sub">// MISSION CONTROL</span></h1>
+      </div>
+    </div>
+
+    <!-- Gateway Station Pill -->
+    <div class="gateway-pill" id="gateway-pill">
+      <div class="gw-icon">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 11a8 8 0 0 1 16 0c0 4.418-8 11-8 11s-8-6.582-8-11z"></path>
+          <circle cx="12" cy="11" r="3"></circle>
+        </svg>
+      </div>
+      <div class="gw-details">
+        <div class="gw-title">STASIUN RENDEH <span class="tag-midpoint">TITIK TENGAH GATEWAY</span></div>
+        <div class="gw-coords" id="gw-coords">GPS: -6.58025, 107.24695 | SDR Ingest: Active</div>
+      </div>
+    </div>
+
+    <!-- System Telemetry Metrics -->
+    <div class="header-stats">
+      <div class="stat-box">
+        <div class="stat-label">TOTAL PACKETS</div>
+        <div class="stat-value" id="stat-total-packets">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">TRAINS TRACKED</div>
+        <div class="stat-value highlight-cyan" id="stat-active-trains">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">CONNECTION</div>
+        <div class="stat-value status-online" id="stat-conn-status">
+          <span class="live-dot"></span> ONLINE (SSE)
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====================================================================== -->
+  <!-- 2. MAIN COCKPIT: INTERACTIVE MAP & LIVE TRAIN HUD CARDS                 -->
+  <!-- ====================================================================== -->
+  <main class="cockpit-container">
+    
+    <!-- Left / Center: Tactical Map Viewport -->
+    <section class="map-section glass-panel">
+      <!-- Floating Map HUD Bar -->
+      <div class="map-floating-hud">
+        <div class="hud-group">
+          <button class="hud-btn active" id="btn-fit-all" title="Fit all trains and stations">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            OVERVIEW
+          </button>
+          <button class="hud-btn" id="btn-center-gw" title="Center map on Midpoint Station">
+            STATION RENDEH
+          </button>
+          <button class="hud-btn" id="btn-center-train2" title="Focus Train 0x0002">
+            TRAIN 0x0002
+          </button>
+          <button class="hud-btn" id="btn-center-train3" title="Focus Train 0x0003">
+            TRAIN 0x0003
+          </button>
+        </div>
+
+        <div class="hud-group">
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-tracks" checked>
+            <span class="toggle-slider"></span>
+            <span>RAIL CORRIDORS</span>
+          </label>
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-vectors" checked>
+            <span class="toggle-slider"></span>
+            <span>DISTANCE VECTORS</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Leaflet Map Container -->
+      <div id="tactical-map" class="tactical-map"></div>
+
+      <!-- Map Legend Overlay -->
+      <div class="map-legend-overlay">
+        <div class="legend-item"><span class="legend-line line-conv"></span> Jalur Konvensional (Gambir - Bandung)</div>
+        <div class="legend-item"><span class="legend-line line-seg2"></span> Segmen 2 (Titik Tengah - Bandung)</div>
+        <div class="legend-item"><span class="legend-line line-whoosh"></span> Kereta Cepat Whoosh</div>
+        <div class="legend-item"><span class="legend-marker marker-gw"></span> Gateway Stasiun Rendeh</div>
+      </div>
+    </section>
+
+    <!-- Right: Real-Time Train Telemetry HUD Panel -->
+    <aside class="trains-section glass-panel">
+      <div class="panel-header">
+        <h2 class="panel-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+            <path d="M8 21h8M12 17v4"></path>
+          </svg>
+          ACTIVE TRAIN TELEMETRY
+        </h2>
+        <span class="badge-counter" id="train-counter-badge">0 LIVE</span>
+      </div>
+
+      <!-- Scrollable Dynamic Cards Container -->
+      <div class="train-cards-grid" id="train-cards-container">
+        <!-- Placeholder when loading -->
+        <div class="empty-placeholder" id="trains-empty-state">
+          <div class="loading-spinner"></div>
+          <p>Mendengarkan siaran telemetri RF dari Kereta...</p>
+          <span class="subtext">Data akan otomatis tampil begitu paket 25-byte diterima oleh SDR.</span>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <!-- ====================================================================== -->
+  <!-- 3. BOTTOM PANEL: TELEMETRY PACKET STREAM LOG TABLE                     -->
+  <!-- ====================================================================== -->
+  <section class="logs-section glass-panel">
+    <div class="logs-header">
+      <div class="logs-header-left">
+        <h2 class="panel-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="8" y1="6" x2="21" y2="6"></line>
+            <line x1="8" y1="12" x2="21" y2="12"></line>
+            <line x1="8" y1="18" x2="21" y2="18"></line>
+            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+          </svg>
+          TELEMETRY PACKET LOG
+        </h2>
+        <span class="log-file-label">logs/gateway_telemetry.jsonl</span>
+      </div>
+
+      <!-- Filters & Actions -->
+      <div class="logs-controls">
+        <div class="filter-group">
+          <label for="filter-train">TRAIN:</label>
+          <select id="filter-train" class="tactical-select">
+            <option value="ALL">ALL TRAINS</option>
+            <option value="0x0002">TRAIN 0x0002</option>
+            <option value="0x0003">TRAIN 0x0003</option>
+          </select>
+        </div>
+
+        <button class="action-btn" id="btn-toggle-autoscroll" title="Toggle automatic scrolling to latest log">
+          <span class="btn-dot dot-active" id="autoscroll-dot"></span> AUTOSCROLL: ON
+        </button>
+
+        <button class="action-btn" id="btn-export-json" title="Download historical telemetry as JSON">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          EXPORT JSON
+        </button>
+      </div>
+    </div>
+
+    <!-- Packet Table Wrapper -->
+    <div class="table-wrapper" id="table-container">
+      <table class="tactical-table">
+        <thead>
+          <tr>
+            <th>TIMESTAMP</th>
+            <th>TRAIN ID</th>
+            <th>GPS COORD (LAT, LON)</th>
+            <th>DIST TO GW</th>
+            <th>SPEED</th>
+            <th>HEADING</th>
+            <th>BATTERY</th>
+            <th>TEMP</th>
+            <th>CPU</th>
+            <th>SYSTEM STATUS</th>
+            <th>RF CORR</th>
+            <th>RAW HEX</th>
+          </tr>
+        </thead>
+        <tbody id="logs-table-body">
+          <!-- Populated dynamically by app.js -->
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ====================================================================== -->
+  <!-- 4. MODAL: DETAILED TELEMETRY INSPECTOR                                 -->
+  <!-- ====================================================================== -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="modal-dialog glass-panel">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-title">TRAIN TELEMETRY INSPECTOR</h3>
+        <button class="modal-close" id="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-content">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Application Client Logic -->
+  <script src="app.js"></script>
+</body>
+</html>
