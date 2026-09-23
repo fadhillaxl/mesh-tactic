@@ -85,7 +85,12 @@ class AISRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Silence standard static file access logs; only log errors & API calls
-        if "/api/" in (args[0] if args else "") or int(args[1] if len(args) > 1 else 200) >= 400:
+        try:
+            req_str = str(args[0]) if args else ""
+            status_code = int(args[1]) if len(args) > 1 and str(args[1]).isdigit() else (args[0] if args and isinstance(args[0], int) else 200)
+            if "/api/" in req_str or status_code >= 400 or "code " in format:
+                super().log_message(format, *args)
+        except Exception:
             super().log_message(format, *args)
 
     def do_OPTIONS(self):

@@ -508,7 +508,7 @@ body.clean-theme {
 
 .dot-cyan { background: #38bdf8; }
 .dot-amber { background: #facc15; }
-.dot-purple { background: #c084fc; }
+.dot-blue { background: #0284c7; }
 .dot-green { background: #22c55e; }
 
 .pill-arrow {
@@ -555,7 +555,10 @@ body.clean-theme {
 
 .bg-cyan { background: #38bdf8; }
 .bg-amber { background: #facc15; }
-.bg-purple { background: #c084fc; }
+.bg-route-dashed {
+  background: repeating-linear-gradient(90deg, #0284c7, #0284c7 4px, transparent 4px, transparent 8px);
+  height: 3px;
+}
 
 .legenda-marker-circle {
   width: 10px;

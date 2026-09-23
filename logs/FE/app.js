@@ -134,22 +134,21 @@ function renderGatewayMarker() {
 
 async function loadRailwayCorridors() {
   try {
-    // 1. Load Conventional & Whoosh tracks
+    // 1. Load Track Kereta 0x0002 (Gambir - Bandung)
+    // Filter out Whoosh (High Speed Rail) so only the active train track is shown
     const res1 = await fetch("/api/geojson/jalur_kereta_jakarta_bandung.json");
     if (res1.ok) {
       const geo1 = await res1.json();
       L.geoJSON(geo1, {
-        style: (feature) => {
-          const isWhoosh = feature.properties?.type === "High Speed Rail";
-          return {
-            color: isWhoosh ? "#c084fc" : "#38bdf8",
-            weight: isWhoosh ? 4 : 3.5,
-            opacity: 0.95,
-            dashArray: isWhoosh ? "8, 6" : "6, 4",
-          };
-        },
+        filter: (feature) => feature.properties?.type !== "High Speed Rail",
+        style: () => ({
+          color: "#38bdf8",
+          weight: 4,
+          opacity: 0.9,
+          dashArray: "6, 4",
+        }),
         onEachFeature: (feature, layer) => {
-          layer.bindTooltip(feature.properties?.name || "Jalur Kereta", {
+          layer.bindTooltip("Track Kereta 0x0002 (Gambir - Bandung)", {
             sticky: true,
             className: "tactical-tooltip",
           });
@@ -157,19 +156,19 @@ async function loadRailwayCorridors() {
       }).addTo(STATE.layers.tracks);
     }
 
-    // 2. Load Segmen 2 (Titik Tengah ke Bandung)
+    // 2. Load Track Kereta 0x0003: Segmen 2 (Titik Tengah ke Bandung)
     const res2 = await fetch("/api/geojson/tengah_bandung_ke_bandung.json");
     if (res2.ok) {
       const geo2 = await res2.json();
       L.geoJSON(geo2, {
-        style: {
+        style: () => ({
           color: "#facc15",
           weight: 4,
-          opacity: 0.95,
+          opacity: 0.9,
           dashArray: "6, 6",
-        },
+        }),
         onEachFeature: (feature, layer) => {
-          layer.bindTooltip(feature.properties?.name || "Segmen 2", {
+          layer.bindTooltip("Track Kereta 0x0003 (Stasiun Rendeh - Bandung)", {
             sticky: true,
             className: "tactical-tooltip",
           });
@@ -182,29 +181,14 @@ async function loadRailwayCorridors() {
 }
 
 // ==============================================================================
-// 4. CIRCULAR BLUE LOCATION MARKERS (MATCHING 168RAILWAY & MOCKUP)
+// 4. CIRCULAR BLUE LOCATION MARKERS & ROUTE PATH
 // ==============================================================================
-function updateTrainMarker(trainId, lat, lon, heading, speed) {
+function updateTrainMarker(trainId, lat, lon, heading, speed, packet = null) {
   const isAmber = trainId === "0x0003";
   const markerClass = isAmber ? "circular-blue-train-marker amber-train" : "circular-blue-train-marker";
   const trailColor = isAmber ? "#eab308" : "#0284c7";
 
-  // 1. Trail Breadcrumb (Dotted path)
-  if (!STATE.layers.trails[trainId]) {
-    STATE.layers.trails[trainId] = L.polyline([[lat, lon]], {
-      color: trailColor,
-      weight: 3,
-      opacity: 0.8,
-      dashArray: "4, 6",
-    }).addTo(STATE.map);
-  } else {
-    const latlngs = STATE.layers.trails[trainId].getLatLngs();
-    latlngs.push([lat, lon]);
-    if (latlngs.length > 60) latlngs.shift();
-    STATE.layers.trails[trainId].setLatLngs(latlngs);
-  }
-
-  // 2. Circular Blue Location Marker with Train Silhouette Icon
+  // 1. Circular Blue Location Marker with Train Silhouette Icon
   const markerHtml = `
     <div class="${markerClass}" title="Train ${trainId} (${speed} km/h)">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -256,22 +240,47 @@ function updateTrainMarker(trainId, lat, lon, heading, speed) {
     STATE.layers.trains[trainId].setTooltipContent(`<strong>Train ${trainId}</strong> • ${speed.toFixed(0)} km/h`);
   }
 
-  // 3. Distance Vector Line to Stasiun Rendeh Gateway
+  // 2. Jalur Route Path (RF Telemetri Link ke Gateway / Hopping)
+  updateRoutePathLine(trainId, lat, lon, packet);
+}
+
+function updateRoutePathLine(trainId, lat, lon, packet) {
+  const isAmber = trainId === "0x0003";
+  const pathColor = isAmber ? "#eab308" : "#0284c7";
+  const isRelayed = Boolean(packet?.packet?.relayed || packet?.mesh_routing?.relayed);
+
+  let coords = [[lat, lon]];
+  let routeLabel = `Jalur Route Path: Train ${trainId} ➔ Gateway (Direct)`;
+
+  if (isRelayed) {
+    const relayId = trainId === "0x0003" ? "0x0002" : "0x0003";
+    if (STATE.trains[relayId] && STATE.trains[relayId].lat && STATE.trains[relayId].lon) {
+      coords.push([STATE.trains[relayId].lat, STATE.trains[relayId].lon]);
+      routeLabel = `Jalur Route Path (Hopping): Train ${trainId} ➔ Relay ${relayId} ➔ Gateway (1 Hop)`;
+    }
+  }
+  coords.push([STATE.gateway.lat, STATE.gateway.lon]);
+
   if (!STATE.layers.vectorLines[trainId]) {
-    STATE.layers.vectorLines[trainId] = L.polyline(
-      [[lat, lon], [STATE.gateway.lat, STATE.gateway.lon]],
-      {
-        color: trailColor,
-        weight: 1.5,
-        opacity: 0.5,
-        dashArray: "4, 6",
-      }
-    ).addTo(STATE.layers.vectors);
+    STATE.layers.vectorLines[trainId] = L.polyline(coords, {
+      color: isRelayed ? "#f59e0b" : pathColor,
+      weight: isRelayed ? 2.5 : 2.0,
+      opacity: 0.8,
+      dashArray: isRelayed ? "4, 6" : "6, 6",
+    }).addTo(STATE.layers.vectors);
+
+    STATE.layers.vectorLines[trainId].bindTooltip(routeLabel, {
+      sticky: true,
+      className: "tactical-tooltip",
+    });
   } else {
-    STATE.layers.vectorLines[trainId].setLatLngs([
-      [lat, lon],
-      [STATE.gateway.lat, STATE.gateway.lon],
-    ]);
+    STATE.layers.vectorLines[trainId].setLatLngs(coords);
+    STATE.layers.vectorLines[trainId].setStyle({
+      color: isRelayed ? "#f59e0b" : pathColor,
+      weight: isRelayed ? 2.5 : 2.0,
+      dashArray: isRelayed ? "4, 6" : "6, 6",
+    });
+    STATE.layers.vectorLines[trainId].setTooltipContent(routeLabel);
   }
 }
 
@@ -369,6 +378,9 @@ function processTelemetryPacket(packet, isLive = true) {
   STATE.packets.push(packet);
   if (STATE.packets.length > 500) STATE.packets.shift();
 
+  const isRelayed = Boolean(packet.packet?.relayed || packet.mesh_routing?.relayed);
+  const routeStr = packet.packet?.route_str || packet.mesh_routing?.route_str || (isRelayed ? `${tid} ➔ 0x0002 ➔ GW` : `${tid} ➔ GW`);
+
   // Save latest state
   STATE.trains[tid] = {
     train_id: tid,
@@ -381,15 +393,18 @@ function processTelemetryPacket(packet, isLive = true) {
     dist_gw: packet.gateway?.distance_to_train_km || 0,
     received_time: packet.received_time_iso || "",
     correlation: packet.gateway?.rx_correlation,
+    relayed: isRelayed,
+    route_str: routeStr,
   };
 
-  // Update map marker
+  // Update map marker & route path line
   updateTrainMarker(
     tid,
     STATE.trains[tid].lat,
     STATE.trains[tid].lon,
     STATE.trains[tid].heading,
-    STATE.trains[tid].speed
+    STATE.trains[tid].speed,
+    packet
   );
 
   // Update DOM badges & counters
@@ -480,6 +495,7 @@ function renderActiveJourneysCard() {
         <span class="health-pill-tag">Bat: ${(t.health?.battery_v || 0).toFixed(2)}V</span>
         <span class="health-pill-tag">Suhu: ${t.health?.temperature_c || 0}°C</span>
         <span class="health-pill-tag">CPU: ${t.health?.cpu_load_pct || 0}%</span>
+        <span class="health-pill-tag" title="Jalur transmisi: ${t.route_str}" style="${t.relayed ? 'color: #b45309; font-weight: 700;' : ''}">${t.relayed ? '1 Hop' : 'Direct'}</span>
         <span class="health-pill-tag" style="margin-left: auto;">${timeShort} UTC</span>
       </div>
     `;
@@ -513,6 +529,11 @@ function appendDrawerTableRow(packet, isLive = true) {
   const timeStr = (packet.received_time_iso || "").substring(11, 19) || "--:--:--";
   const nodeClass = tid === "0x0002" ? "row-node-blue" : (tid === "0x0003" ? "row-node-amber" : "");
   const isEmerg = telem.device_health?.is_emergency;
+  const isRelayed = Boolean(packet.packet?.relayed || packet.mesh_routing?.relayed);
+  const routeStr = packet.packet?.route_str || packet.mesh_routing?.route_str || (isRelayed ? `${tid} ➔ 0x0002 ➔ GW` : `${tid} ➔ GW`);
+  const routeBadge = isRelayed
+    ? `<span style="background:#fef3c7; color:#b45309; font-weight:700; padding:2px 6px; border-radius:4px;" title="${routeStr}">HOPPED</span>`
+    : `<span style="background:#dcfce7; color:#15803d; font-weight:700; padding:2px 6px; border-radius:4px;" title="${routeStr}">DIRECT</span>`;
 
   row.innerHTML = `
     <td>${timeStr}</td>
@@ -526,6 +547,7 @@ function appendDrawerTableRow(packet, isLive = true) {
     <td>${telem.device_health?.cpu_load_pct || 0}%</td>
     <td style="${isEmerg ? 'color:#ef4444; font-weight:700;' : ''}">${telem.device_health?.status_summary || 'NORMAL'}</td>
     <td>${gw.rx_correlation !== null && gw.rx_correlation !== undefined ? gw.rx_correlation.toFixed(2) : '-'}</td>
+    <td>${routeBadge}</td>
     <td style="color:#64748b; font-size:11px;" title="${packet.raw_hex || ''}">${packet.raw_hex || '-'}</td>
   `;
 

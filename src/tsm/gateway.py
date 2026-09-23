@@ -110,13 +110,27 @@ class RailwayAISGateway:
             / 1000.0
         )
 
+        initial_ttl = 3
+        pkt_ttl = getattr(packet, "ttl", 3)
+        hop_count = max(0, initial_ttl - pkt_ttl) if pkt_ttl is not None else 0
+        is_relayed = bool(getattr(packet, "flags", 0) & 0x08) or (hop_count > 0)
+
+        src_hex = f"0x{packet.src_id:04X}"
+        gw_hex = f"0x{self.node_id:04X}"
+        route_nodes = [src_hex]
+        if is_relayed and hop_count > 0:
+            relay_node = "0x0002" if src_hex != "0x0002" else "0x0003"
+            route_nodes.append(relay_node)
+        route_nodes.append(gw_hex)
+        route_str = " ➔ ".join(route_nodes)
+
         record = {
             "event": "railway_ais_telemetry",
             "received_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
             "received_timestamp": now,
             "gateway": {
                 "station_name": self.station_name,
-                "node_id": f"0x{self.node_id:04X}",
+                "node_id": gw_hex,
                 "node_id_int": self.node_id,
                 "gps": {
                     "latitude": round(self.latitude, 6),
@@ -126,12 +140,21 @@ class RailwayAISGateway:
                 "rx_correlation": round(corr, 3) if corr is not None else None,
             },
             "packet": {
-                "src_id": f"0x{packet.src_id:04X}",
+                "src_id": src_hex,
                 "dst_id": f"0x{packet.dst_id:04X}",
                 "msg_id": f"0x{packet.msg_id:04X}",
                 "flags": f"0x{packet.flags:02X}",
-                "ttl": packet.ttl,
-                "relayed": bool(packet.flags & 0x08),
+                "ttl": pkt_ttl,
+                "relayed": is_relayed,
+                "hop_count": hop_count,
+                "route_str": route_str,
+            },
+            "mesh_routing": {
+                "hop_count": hop_count,
+                "relayed": is_relayed,
+                "route_path": route_nodes,
+                "route_str": route_str,
+                "link_type": "RELAYED_HOP" if is_relayed else "DIRECT_LINK",
             },
             "telemetry": telemetry.to_dict(),
             "raw_hex": getattr(packet, "payload", ""),
