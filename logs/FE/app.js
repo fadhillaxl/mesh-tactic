@@ -1,11 +1,11 @@
 /**
- * Tactical Railway AIS Mission Control Client Application.
- * Integrates Leaflet Dark Mode Map, GeoJSON Railway Corridors,
- * Live SSE Telemetry Ingestion, Dynamic HUD Cards, and Log Streaming.
+ * 168Railway & AIS // Live Train Tracking Client Application.
+ * Clean White / Light Grey Minimalist Interface with High-Contrast
+ * Satellite Imagery Map, Circular Blue Location Markers, and Real-Time SSE Telemetry.
  */
 
 // ==============================================================================
-// 1. APPLICATION STATE & CONSTANTS
+// 1. STATE STORE & CONFIGURATION
 // ==============================================================================
 const STATE = {
   gateway: {
@@ -14,12 +14,14 @@ const STATE = {
     lon: 107.24695,
   },
   trains: {},          // Map of train_id -> latest telemetry object
-  packets: [],         // Array of ingested packets
+  packets: [],         // Array of all received telemetry packets
   autoScroll: true,
   filterTrain: "ALL",
   eventSource: null,
   pollTimer: null,
   map: null,
+  activeBasemap: "satellite", // "satellite" or "dark"
+  baseLayers: {},
   layers: {
     tracks: null,
     vectors: null,
@@ -28,50 +30,71 @@ const STATE = {
     trails: {},
     vectorLines: {},
   },
-  showTracks: true,
-  showVectors: true,
 };
 
-const TRAIN_COLORS = {
-  "0x0002": "#00f0ff", // Tactical Cyan (Train 2 - Pi 5)
-  "0x0003": "#ffb800", // Amber (Train 3 - AML)
-  "DEFAULT": "#3a86ff",
+const ROUTE_NAMES = {
+  "0x0002": "Gambir → Bandung (Jalur Konvensional)",
+  "0x0003": "Stasiun Rendeh → Bandung (Segmen 2)",
+  "DEFAULT": "Rute Kereta Api Lintas Jawa",
 };
 
 // ==============================================================================
 // 2. INITIALIZATION
 // ==============================================================================
 document.addEventListener("DOMContentLoaded", () => {
+  initLiveClock();
   initMap();
   initUIControls();
   loadInitialData();
   startLiveStream();
 });
 
+// Real-Time Clock in Top-Right Widget
+function initLiveClock() {
+  const clockEl = document.getElementById("clock-display");
+  function tick() {
+    const now = new Date();
+    if (clockEl) {
+      clockEl.innerText = now.toTimeString().substring(0, 8);
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
 // ==============================================================================
-// 3. MAP SUBSYSTEM (LEAFLET)
+// 3. MAP SUBSYSTEM (HIGH-CONTRAST SATELLITE MAP)
 // ==============================================================================
 function initMap() {
-  // Create map centered on Titik Tengah Utama (Stasiun Rendeh)
+  // Center on Titik Tengah (Stasiun Rendeh)
   STATE.map = L.map("tactical-map", {
     zoomControl: false,
     attributionControl: false,
   }).setView([STATE.gateway.lat, STATE.gateway.lon], 10);
 
-  // Position custom zoom control on top-right
-  L.control.zoom({ position: "topright" }).addTo(STATE.map);
+  // Position custom zoom control on bottom-right (above floating log button)
+  L.control.zoom({ position: "bottomright" }).addTo(STATE.map);
 
-  // Dark Matter Tiles from CartoDB
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    maxZoom: 19,
-    subdomains: "abcd",
-  }).addTo(STATE.map);
+  // High-Contrast Geographic Satellite Imagery Layer (Esri World Imagery)
+  STATE.baseLayers.satellite = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 18 }
+  );
+
+  // Fallback / Alternative Dark Matter Layer (CartoDB)
+  STATE.baseLayers.dark = L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    { maxZoom: 19, subdomains: "abcd" }
+  );
+
+  // Set default basemap to Satellite
+  STATE.baseLayers.satellite.addTo(STATE.map);
 
   // Layer groups
   STATE.layers.tracks = L.layerGroup().addTo(STATE.map);
   STATE.layers.vectors = L.layerGroup().addTo(STATE.map);
 
-  // Add Gateway Station Marker
+  // Add Gateway Station Marker (Stasiun Rendeh)
   renderGatewayMarker();
 
   // Load Railway Track Corridors from GeoJSON
@@ -80,22 +103,31 @@ function initMap() {
 
 function renderGatewayMarker() {
   const stationIcon = L.divIcon({
-    className: "custom-station-icon",
+    className: "custom-station-wrapper",
     html: `
-      <div class="station-pulse-marker" title="${STATE.gateway.station_name}"></div>
+      <div class="circular-station-marker" title="${STATE.gateway.station_name}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M4 11a8 8 0 0 1 16 0c0 4.418-8 11-8 11s-8-6.582-8-11z"></path>
+          <circle cx="12" cy="11" r="2.5"></circle>
+        </svg>
+      </div>
     `,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
   });
 
   STATE.layers.station = L.marker([STATE.gateway.lat, STATE.gateway.lon], { icon: stationIcon })
     .addTo(STATE.map)
     .bindPopup(`
-      <div style="font-family: 'Inter', sans-serif; font-size: 12px; color: #111;">
-        <strong style="color: #0088cc;">${STATE.gateway.station_name}</strong><br/>
-        Titik Tengah Utama Pembagi Koridor<br/>
-        GPS: ${STATE.gateway.lat}, ${STATE.gateway.lon}<br/>
-        <em>Gateway Ingestion: Active</em>
+      <div style="font-family: 'Inter', sans-serif; font-size: 12px; color: #0f172a; min-width: 180px;">
+        <div style="font-weight: 800; color: #16a34a; font-size: 13px; margin-bottom: 2px;">
+          ${STATE.gateway.station_name}
+        </div>
+        <div style="color: #64748b; font-size: 11px; margin-bottom: 6px;">Titik Tengah Utama Gateway</div>
+        <div style="background: #f8fafc; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0; font-family: monospace;">
+          GPS: ${STATE.gateway.lat}, ${STATE.gateway.lon}<br/>
+          Status: Ingest LoRa SDR Aktif
+        </div>
       </div>
     `);
 }
@@ -110,10 +142,10 @@ async function loadRailwayCorridors() {
         style: (feature) => {
           const isWhoosh = feature.properties?.type === "High Speed Rail";
           return {
-            color: isWhoosh ? "#b5179e" : "#00f0ff",
-            weight: isWhoosh ? 4 : 3,
-            opacity: 0.85,
-            dashArray: isWhoosh ? "8, 6" : "4, 4",
+            color: isWhoosh ? "#c084fc" : "#38bdf8",
+            weight: isWhoosh ? 4 : 3.5,
+            opacity: 0.95,
+            dashArray: isWhoosh ? "8, 6" : "6, 4",
           };
         },
         onEachFeature: (feature, layer) => {
@@ -131,9 +163,9 @@ async function loadRailwayCorridors() {
       const geo2 = await res2.json();
       L.geoJSON(geo2, {
         style: {
-          color: "#ffb800",
+          color: "#facc15",
           weight: 4,
-          opacity: 0.9,
+          opacity: 0.95,
           dashArray: "6, 6",
         },
         onEachFeature: (feature, layer) => {
@@ -149,80 +181,96 @@ async function loadRailwayCorridors() {
   }
 }
 
+// ==============================================================================
+// 4. CIRCULAR BLUE LOCATION MARKERS (MATCHING 168RAILWAY & MOCKUP)
+// ==============================================================================
 function updateTrainMarker(trainId, lat, lon, heading, speed) {
-  const color = TRAIN_COLORS[trainId] || TRAIN_COLORS["DEFAULT"];
+  const isAmber = trainId === "0x0003";
+  const markerClass = isAmber ? "circular-blue-train-marker amber-train" : "circular-blue-train-marker";
+  const trailColor = isAmber ? "#eab308" : "#0284c7";
 
-  // 1. Trail Breadcrumb
+  // 1. Trail Breadcrumb (Dotted path)
   if (!STATE.layers.trails[trainId]) {
     STATE.layers.trails[trainId] = L.polyline([[lat, lon]], {
-      color: color,
-      weight: 2,
-      opacity: 0.6,
-      dashArray: "3, 6",
+      color: trailColor,
+      weight: 3,
+      opacity: 0.8,
+      dashArray: "4, 6",
     }).addTo(STATE.map);
   } else {
     const latlngs = STATE.layers.trails[trainId].getLatLngs();
     latlngs.push([lat, lon]);
-    if (latlngs.length > 50) latlngs.shift(); // Keep last 50 points
+    if (latlngs.length > 60) latlngs.shift();
     STATE.layers.trails[trainId].setLatLngs(latlngs);
   }
 
-  // 2. Train Icon with Heading Rotation
-  const rot = Math.round(heading || 0);
-  const trainSvg = `
-    <div class="train-arrow-marker" style="transform: rotate(${rot}deg); color: ${color};" title="${trainId} (${speed} km/h)">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="${color}" stroke="#ffffff" stroke-width="1.5">
-        <path d="M12 2L4 20l8-4 8 4z"/>
+  // 2. Circular Blue Location Marker with Train Silhouette Icon
+  const markerHtml = `
+    <div class="${markerClass}" title="Train ${trainId} (${speed} km/h)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="3" width="16" height="16" rx="3"></rect>
+        <path d="M4 11h16"></path>
+        <circle cx="8" cy="15" r="1.5" fill="currentColor"></circle>
+        <circle cx="16" cy="15" r="1.5" fill="currentColor"></circle>
+        <path d="M8 19l-2 3M16 19l2 3"></path>
       </svg>
     </div>
   `;
 
   const customIcon = L.divIcon({
-    className: "custom-train-marker",
-    html: trainSvg,
+    className: "custom-marker-wrapper",
+    html: markerHtml,
     iconSize: [32, 32],
     iconAnchor: [16, 16],
   });
 
+  const popupContent = `
+    <div style="font-family: 'Inter', sans-serif; font-size: 12px; color: #0f172a; min-width: 190px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <strong style="color: ${trailColor}; font-size: 13px;">Train ${trainId}</strong>
+        <span style="background: #dcfce7; color: #15803d; font-weight: 700; font-size: 10px; padding: 2px 6px; border-radius: 9999px;">ON TRACK</span>
+      </div>
+      <div style="color: #64748b; font-size: 11px; margin-bottom: 8px;">
+        ${ROUTE_NAMES[trainId] || ROUTE_NAMES["DEFAULT"]}
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: #f8fafc; padding: 6px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 11px;">
+        <div><strong>Kecepatan:</strong><br/>${speed} km/h</div>
+        <div><strong>Arah Haluan:</strong><br/>${heading.toFixed(1)}°</div>
+      </div>
+    </div>
+  `;
+
   if (!STATE.layers.trains[trainId]) {
     STATE.layers.trains[trainId] = L.marker([lat, lon], { icon: customIcon })
       .addTo(STATE.map)
-      .bindPopup(`
-        <div style="font-family: 'Inter', sans-serif; font-size: 12px; color: #111;">
-          <strong style="color: ${color};">Train ${trainId}</strong><br/>
-          GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}<br/>
-          Kecepatan: ${speed} km/h<br/>
-          Arah: ${heading.toFixed(1)}°
-        </div>
-      `);
+      .bindPopup(popupContent);
   } else {
     STATE.layers.trains[trainId].setLatLng([lat, lon]);
     STATE.layers.trains[trainId].setIcon(customIcon);
+    STATE.layers.trains[trainId].setPopupContent(popupContent);
   }
 
-  // 3. Distance Vector Line to Gateway Station
-  if (STATE.showVectors) {
-    if (!STATE.layers.vectorLines[trainId]) {
-      STATE.layers.vectorLines[trainId] = L.polyline(
-        [[lat, lon], [STATE.gateway.lat, STATE.gateway.lon]],
-        {
-          color: color,
-          weight: 1.5,
-          opacity: 0.45,
-          dashArray: "5, 8",
-        }
-      ).addTo(STATE.layers.vectors);
-    } else {
-      STATE.layers.vectorLines[trainId].setLatLngs([
-        [lat, lon],
-        [STATE.gateway.lat, STATE.gateway.lon],
-      ]);
-    }
+  // 3. Distance Vector Line to Stasiun Rendeh Gateway
+  if (!STATE.layers.vectorLines[trainId]) {
+    STATE.layers.vectorLines[trainId] = L.polyline(
+      [[lat, lon], [STATE.gateway.lat, STATE.gateway.lon]],
+      {
+        color: trailColor,
+        weight: 1.5,
+        opacity: 0.5,
+        dashArray: "4, 6",
+      }
+    ).addTo(STATE.layers.vectors);
+  } else {
+    STATE.layers.vectorLines[trainId].setLatLngs([
+      [lat, lon],
+      [STATE.gateway.lat, STATE.gateway.lon],
+    ]);
   }
 }
 
 // ==============================================================================
-// 4. DATA INGESTION & SSE STREAMING
+// 5. DATA INGESTION & SSE REAL-TIME STREAMING
 // ==============================================================================
 async function loadInitialData() {
   try {
@@ -234,10 +282,8 @@ async function loadInitialData() {
       STATE.gateway.station_name = data.gateway.station_name || STATE.gateway.station_name;
       STATE.gateway.lat = data.gateway.gps?.latitude || STATE.gateway.lat;
       STATE.gateway.lon = data.gateway.gps?.longitude || STATE.gateway.lon;
-      updateGatewayUI();
     }
 
-    // Ingest recent historical packets
     if (Array.isArray(data.recent_packets)) {
       data.recent_packets.forEach((p) => processTelemetryPacket(p, false));
     }
@@ -250,8 +296,6 @@ function startLiveStream() {
   if (STATE.eventSource) {
     STATE.eventSource.close();
   }
-
-  const connStatusEl = document.getElementById("stat-conn-status");
 
   try {
     STATE.eventSource = new EventSource("/api/stream");
@@ -266,18 +310,27 @@ function startLiveStream() {
     });
 
     STATE.eventSource.onopen = () => {
-      connStatusEl.innerHTML = '<span class="live-dot"></span> ONLINE (SSE)';
-      connStatusEl.className = "stat-value status-online";
+      updateStreamIndicator(true);
     };
 
     STATE.eventSource.onerror = () => {
-      connStatusEl.innerHTML = '<span class="badge-dot" style="background:#ffaa00"></span> RECONNECTING...';
-      connStatusEl.className = "stat-value";
-      // Fallback to polling if stream is disrupted
+      updateStreamIndicator(false);
       triggerPollingFallback();
     };
   } catch (err) {
     triggerPollingFallback();
+  }
+}
+
+function updateStreamIndicator(online) {
+  const btn = document.getElementById("btn-live-stream-toggle");
+  if (!btn) return;
+  if (online) {
+    btn.innerHTML = '<span class="live-dot-green"></span> STREAM ACTIVE';
+    btn.style.background = "#22c55e";
+  } else {
+    btn.innerHTML = '<span class="live-dot-green" style="background:#f59e0b"></span> RECONNECTING';
+    btn.style.background = "#d97706";
   }
 }
 
@@ -298,7 +351,7 @@ function triggerPollingFallback() {
 }
 
 // ==============================================================================
-// 5. PACKET PROCESSING & UI UPDATES
+// 6. TELEMETRY PACKET PROCESSING & UI UPDATES
 // ==============================================================================
 function processTelemetryPacket(packet, isLive = true) {
   if (!packet || !packet.telemetry) return;
@@ -307,11 +360,10 @@ function processTelemetryPacket(packet, isLive = true) {
   const tid = telem.train_id;
   if (!tid) return;
 
-  // Add to internal packet array
   STATE.packets.push(packet);
   if (STATE.packets.length > 500) STATE.packets.shift();
 
-  // Update train latest state
+  // Save latest state
   STATE.trains[tid] = {
     train_id: tid,
     last_packet: packet,
@@ -334,118 +386,117 @@ function processTelemetryPacket(packet, isLive = true) {
     STATE.trains[tid].speed
   );
 
-  // Update DOM components
-  updateHeaderStats();
-  renderTrainCards();
-  appendTableRow(packet, isLive);
+  // Update DOM badges & counters
+  updateBadgesAndCounters();
+
+  // Render floating Active Journeys card
+  renderActiveJourneysCard();
+
+  // Append row to slideup telemetry drawer
+  appendDrawerTableRow(packet, isLive);
 }
 
-function updateGatewayUI() {
-  const coordsEl = document.getElementById("gw-coords");
-  if (coordsEl) {
-    coordsEl.innerText = `GPS: ${STATE.gateway.lat.toFixed(5)}, ${STATE.gateway.lon.toFixed(5)} | SDR Ingest: Active`;
-  }
+function updateBadgesAndCounters() {
+  const trainCount = Object.keys(STATE.trains).length;
+  const packetCount = STATE.packets.length;
+
+  // Header & sidebar badges
+  const badgeTrains = document.getElementById("nav-badge-trains");
+  const badgeEvents = document.getElementById("nav-badge-events");
+  const sidebarTrains = document.getElementById("sidebar-badge-trains");
+  const sidebarPackets = document.getElementById("sidebar-badge-packets");
+  const topCounter = document.getElementById("trains-active-count");
+  const cardCounter = document.getElementById("card-trains-count");
+
+  if (badgeTrains) badgeTrains.innerText = trainCount;
+  if (sidebarTrains) sidebarTrains.innerText = trainCount;
+  if (topCounter) topCounter.innerText = `${trainCount} trains`;
+  if (cardCounter) cardCounter.innerText = trainCount;
+
+  if (badgeEvents) badgeEvents.innerText = packetCount;
+  if (sidebarPackets) sidebarPackets.innerText = packetCount;
 }
 
-function updateHeaderStats() {
-  const totalEl = document.getElementById("stat-total-packets");
-  const trainsEl = document.getElementById("stat-active-trains");
-  const badgeEl = document.getElementById("train-counter-badge");
-
-  if (totalEl) totalEl.innerText = STATE.packets.length.toLocaleString();
-  const count = Object.keys(STATE.trains).length;
-  if (trainsEl) trainsEl.innerText = count;
-  if (badgeEl) badgeEl.innerText = `${count} LIVE`;
-}
-
-function renderTrainCards() {
-  const container = document.getElementById("train-cards-container");
-  const emptyState = document.getElementById("trains-empty-state");
+function renderActiveJourneysCard() {
+  const container = document.getElementById("journeys-list-container");
+  if (!container) return;
 
   const trainKeys = Object.keys(STATE.trains);
   if (trainKeys.length === 0) {
-    if (emptyState) emptyState.style.display = "flex";
+    container.innerHTML = `
+      <div style="padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+        Menunggu siaran telemetri dari armada kereta...
+      </div>
+    `;
     return;
   }
-  if (emptyState) emptyState.style.display = "none";
+
+  container.innerHTML = "";
 
   trainKeys.forEach((tid) => {
     const t = STATE.trains[tid];
-    let card = document.getElementById(`card-${tid}`);
-
-    const color = TRAIN_COLORS[tid] || TRAIN_COLORS["DEFAULT"];
+    const isAmber = tid === "0x0003";
+    const dotClass = isAmber ? "dot-amber-journey" : "dot-blue-journey";
+    const route = ROUTE_NAMES[tid] || ROUTE_NAMES["DEFAULT"];
     const isEmerg = t.health?.is_emergency;
     const timeShort = t.received_time ? t.received_time.substring(11, 19) : "--:--:--";
 
-    if (!card) {
-      card = document.createElement("div");
-      card.id = `card-${tid}`;
-      card.className = "train-card";
-      card.style.setProperty("--card-accent", color);
-      container.appendChild(card);
-    }
-
-    card.innerHTML = `
-      <div class="card-top">
-        <div class="card-train-id">
-          <span style="color: ${color};">Train ${tid}</span>
-          <span class="card-train-pill">NODE ${t.last_packet?.packet?.src_id || tid}</span>
+    const item = document.createElement("div");
+    item.className = "journey-item-card";
+    item.innerHTML = `
+      <div class="journey-header">
+        <div>
+          <div class="journey-train-title">
+            <span class="journey-indicator-dot ${dotClass}"></span>
+            <span>Train ${tid}</span>
+          </div>
+          <div class="journey-route-text">${route}</div>
         </div>
-        <div class="card-time">${timeShort} UTC</div>
+        <span class="journey-status-pill ${isEmerg ? 'emergency' : ''}">
+          ${isEmerg ? 'EMERGENCY' : 'On Track'}
+        </span>
       </div>
 
-      <div class="card-hero-metrics">
-        <div class="hero-metric">
-          <span class="hero-label">SPEED</span>
-          <span class="hero-val">${t.speed.toFixed(1)} <span class="hero-unit">km/h</span></span>
+      <div class="journey-metrics-row">
+        <div class="metric-col">
+          <span class="m-label">KECEPATAN</span>
+          <span class="m-val">${t.speed.toFixed(1)} <span>km/h</span></span>
         </div>
-        <div class="hero-metric">
-          <span class="hero-label">DIST TO GATEWAY</span>
-          <span class="hero-val" style="color: ${color};">${t.dist_gw.toFixed(1)} <span class="hero-unit">km</span></span>
-        </div>
-      </div>
-
-      <div class="card-health-grid">
-        <div class="health-item">
-          <span>BATTERY</span>
-          <span>${(t.health?.battery_v || 0).toFixed(2)} V</span>
-        </div>
-        <div class="health-item">
-          <span>TEMP</span>
-          <span>${t.health?.temperature_c || 0} °C</span>
-        </div>
-        <div class="health-item">
-          <span>CPU LOAD</span>
-          <span>${t.health?.cpu_load_pct || 0} %</span>
+        <div class="metric-col">
+          <span class="m-label">JARAK KE GATEWAY</span>
+          <span class="m-val" style="color: ${isAmber ? '#b45309' : '#0284c7'};">
+            ${t.dist_gw.toFixed(1)} <span>km</span>
+          </span>
         </div>
       </div>
 
-      <div class="card-flags">
-        <span class="flag-badge ${t.health?.flags?.gps_locked ? 'ok' : 'off'}">GPS: 3D-FIX</span>
-        <span class="flag-badge ${t.health?.flags?.engine_active ? 'ok' : 'off'}">ENG: ${t.health?.flags?.engine_active ? 'ON' : 'OFF'}</span>
-        <span class="flag-badge ${t.health?.flags?.sdr_healthy ? 'ok' : 'off'}">SDR: OK</span>
-        <span class="flag-badge ${isEmerg ? 'emergency' : 'ok'}">${isEmerg ? 'BRAKE: EMERGENCY' : 'BRAKE: NORMAL'}</span>
+      <div class="journey-health-pills">
+        <span class="health-pill-tag">Bat: ${(t.health?.battery_v || 0).toFixed(2)}V</span>
+        <span class="health-pill-tag">Suhu: ${t.health?.temperature_c || 0}°C</span>
+        <span class="health-pill-tag">CPU: ${t.health?.cpu_load_pct || 0}%</span>
+        <span class="health-pill-tag" style="margin-left: auto;">${timeShort} UTC</span>
       </div>
     `;
 
-    card.onclick = () => {
+    item.onclick = () => {
       STATE.map.setView([t.lat, t.lon], 13);
       if (STATE.layers.trains[tid]) {
         STATE.layers.trains[tid].openPopup();
       }
     };
+
+    container.appendChild(item);
   });
 }
 
-function appendTableRow(packet, isLive = true) {
-  const tbody = document.getElementById("logs-table-body");
+function appendDrawerTableRow(packet, isLive = true) {
+  const tbody = document.getElementById("drawer-logs-body");
   if (!tbody) return;
 
   const telem = packet.telemetry || {};
   const gw = packet.gateway || {};
   const tid = telem.train_id || "UNKNOWN";
 
-  // Filter check
   if (STATE.filterTrain !== "ALL" && STATE.filterTrain !== tid) {
     return;
   }
@@ -454,12 +505,12 @@ function appendTableRow(packet, isLive = true) {
   if (isLive) row.className = "new-row";
 
   const timeStr = (packet.received_time_iso || "").substring(11, 19) || "--:--:--";
-  const nodeClass = tid === "0x0002" ? "node-2" : (tid === "0x0003" ? "node-3" : "");
+  const nodeClass = tid === "0x0002" ? "row-node-blue" : (tid === "0x0003" ? "row-node-amber" : "");
   const isEmerg = telem.device_health?.is_emergency;
 
   row.innerHTML = `
     <td>${timeStr}</td>
-    <td class="cell-node ${nodeClass}">${tid}</td>
+    <td class="${nodeClass}">${tid}</td>
     <td>${(telem.gps?.latitude || 0).toFixed(5)}, ${(telem.gps?.longitude || 0).toFixed(5)}</td>
     <td><strong>${(gw.distance_to_train_km || 0).toFixed(1)} km</strong></td>
     <td>${(telem.motion?.speed_kmh || 0).toFixed(1)} km/h</td>
@@ -467,100 +518,137 @@ function appendTableRow(packet, isLive = true) {
     <td>${(telem.device_health?.battery_v || 0).toFixed(2)} V</td>
     <td>${telem.device_health?.temperature_c || 0} °C</td>
     <td>${telem.device_health?.cpu_load_pct || 0}%</td>
-    <td class="${isEmerg ? 'cell-emergency' : ''}">${telem.device_health?.status_summary || 'NORMAL'}</td>
+    <td style="${isEmerg ? 'color:#ef4444; font-weight:700;' : ''}">${telem.device_health?.status_summary || 'NORMAL'}</td>
     <td>${gw.rx_correlation !== null && gw.rx_correlation !== undefined ? gw.rx_correlation.toFixed(2) : '-'}</td>
-    <td class="cell-hex" title="${packet.raw_hex || ''}">${packet.raw_hex || '-'}</td>
+    <td style="color:#64748b; font-size:11px;" title="${packet.raw_hex || ''}">${packet.raw_hex || '-'}</td>
   `;
 
-  // Row click opens inspection modal
   row.onclick = () => showDetailModal(packet);
 
   tbody.appendChild(row);
 
-  // Keep table within 200 items in DOM
-  if (tbody.children.length > 200) {
+  if (tbody.children.length > 250) {
     tbody.removeChild(tbody.firstChild);
   }
 
-  // Auto-scroll
   if (STATE.autoScroll) {
-    const wrapper = document.getElementById("table-container");
-    if (wrapper) {
-      wrapper.scrollTop = wrapper.scrollHeight;
-    }
+    const wrapper = document.getElementById("drawer-table-container");
+    if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
   }
 }
 
 // ==============================================================================
-// 6. UI CONTROLS & INTERACTIONS
+// 7. UI CONTROLS & INTERACTIVE LISTENERS
 // ==============================================================================
 function initUIControls() {
-  // 1. Center Gateway
-  document.getElementById("btn-center-gw")?.addEventListener("click", () => {
+  // 1. Toggle Satellite vs Dark Basemap
+  document.getElementById("btn-toggle-basemap")?.addEventListener("click", () => {
+    if (STATE.activeBasemap === "satellite") {
+      STATE.map.removeLayer(STATE.baseLayers.satellite);
+      STATE.baseLayers.dark.addTo(STATE.map);
+      STATE.activeBasemap = "dark";
+    } else {
+      STATE.map.removeLayer(STATE.baseLayers.dark);
+      STATE.baseLayers.satellite.addTo(STATE.map);
+      STATE.activeBasemap = "satellite";
+    }
+  });
+
+  // 2. Collapse / Expand Active Journeys Card
+  const cardWidget = document.getElementById("trains-floating-card");
+  const btnCollapse = document.getElementById("btn-collapse-journeys");
+  btnCollapse?.addEventListener("click", () => {
+    cardWidget?.classList.toggle("collapsed");
+    btnCollapse.innerText = cardWidget?.classList.contains("collapsed") ? "+" : "−";
+  });
+
+  // 3. Sidebar Button: Dinasan
+  document.getElementById("sidebar-btn-dinasan")?.addEventListener("click", () => {
+    cardWidget?.classList.toggle("collapsed");
+  });
+
+  // 4. Sidebar Button: Info Lintas -> Opens Slideup Drawer
+  document.getElementById("sidebar-btn-info")?.addEventListener("click", toggleDrawer);
+  document.getElementById("btn-toggle-log-drawer")?.addEventListener("click", toggleDrawer);
+  document.getElementById("nav-telemetry-log")?.addEventListener("click", toggleDrawer);
+  document.getElementById("nav-info-lintas")?.addEventListener("click", toggleDrawer);
+  document.getElementById("btn-close-drawer")?.addEventListener("click", closeDrawer);
+
+  // 5. Sidebar Button: Legenda Dropdown
+  const legendaPanel = document.getElementById("legenda-panel");
+  document.getElementById("sidebar-btn-legenda")?.addEventListener("click", () => {
+    legendaPanel?.classList.toggle("open");
+  });
+
+  // 6. Fit All Overview
+  document.getElementById("btn-fit-overview")?.addEventListener("click", fitAllPoints);
+  document.getElementById("nav-live-map")?.addEventListener("click", fitAllPoints);
+
+  // 7. Focus Gateway (Stasiun Rendeh)
+  document.getElementById("btn-focus-gateway")?.addEventListener("click", () => {
     STATE.map.setView([STATE.gateway.lat, STATE.gateway.lon], 13);
+    STATE.layers.station?.openPopup();
+  });
+  document.getElementById("btn-toggle-gateway")?.addEventListener("click", () => {
+    STATE.map.setView([STATE.gateway.lat, STATE.gateway.lon], 13);
+    STATE.layers.station?.openPopup();
+  });
+  document.getElementById("nav-stasiun")?.addEventListener("click", () => {
+    STATE.map.setView([STATE.gateway.lat, STATE.gateway.lon], 13);
+    STATE.layers.station?.openPopup();
   });
 
-  // 2. Center Train 0x0002
-  document.getElementById("btn-center-train2")?.addEventListener("click", () => {
-    const t = STATE.trains["0x0002"];
-    if (t) STATE.map.setView([t.lat, t.lon], 13);
+  // 8. Close Bottom Service Pill
+  document.getElementById("btn-close-pill")?.addEventListener("click", () => {
+    const pill = document.querySelector(".bottom-service-pill");
+    if (pill) pill.style.display = "none";
   });
 
-  // 3. Center Train 0x0003
-  document.getElementById("btn-center-train3")?.addEventListener("click", () => {
-    const t = STATE.trains["0x0003"];
-    if (t) STATE.map.setView([t.lat, t.lon], 13);
-  });
-
-  // 4. Fit All
-  document.getElementById("btn-fit-all")?.addEventListener("click", () => {
-    fitAllPoints();
-  });
-
-  // 5. Toggle Tracks
-  document.getElementById("toggle-tracks")?.addEventListener("change", (e) => {
-    STATE.showTracks = e.target.checked;
-    if (STATE.showTracks) {
-      STATE.map.addLayer(STATE.layers.tracks);
-    } else {
-      STATE.map.removeLayer(STATE.layers.tracks);
-    }
-  });
-
-  // 6. Toggle Vectors
-  document.getElementById("toggle-vectors")?.addEventListener("change", (e) => {
-    STATE.showVectors = e.target.checked;
-    if (STATE.showVectors) {
-      STATE.map.addLayer(STATE.layers.vectors);
-    } else {
-      STATE.map.removeLayer(STATE.layers.vectors);
-    }
-  });
-
-  // 7. Auto-scroll Toggle
+  // 9. Drawer Autoscroll Toggle
   const btnScroll = document.getElementById("btn-toggle-autoscroll");
   const dotScroll = document.getElementById("autoscroll-dot");
   btnScroll?.addEventListener("click", () => {
     STATE.autoScroll = !STATE.autoScroll;
-    btnScroll.innerHTML = `<span class="btn-dot ${STATE.autoScroll ? 'dot-active' : ''}"></span> AUTOSCROLL: ${STATE.autoScroll ? 'ON' : 'OFF'}`;
+    btnScroll.innerHTML = `<span class="${STATE.autoScroll ? 'dot-active' : ''}"></span> Autoscroll: ${STATE.autoScroll ? 'ON' : 'OFF'}`;
   });
 
-  // 8. Filter Train
-  document.getElementById("filter-train")?.addEventListener("change", (e) => {
+  // 10. Drawer Filter
+  document.getElementById("filter-train-drawer")?.addEventListener("change", (e) => {
     STATE.filterTrain = e.target.value;
-    rebuildTable();
+    rebuildDrawerTable();
   });
 
-  // 9. Export JSON
-  document.getElementById("btn-export-json")?.addEventListener("click", () => {
-    exportDataAsJson();
+  // 11. Search Box
+  document.getElementById("train-search-box")?.addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) return;
+    for (const tid of Object.keys(STATE.trains)) {
+      if (tid.toLowerCase().includes(q)) {
+        const t = STATE.trains[tid];
+        STATE.map.setView([t.lat, t.lon], 13);
+        STATE.layers.trains[tid]?.openPopup();
+        break;
+      }
+    }
   });
 
-  // 10. Modal Close
+  // 12. Export JSON
+  document.getElementById("btn-export-nav")?.addEventListener("click", exportDataAsJson);
+  document.getElementById("btn-drawer-export")?.addEventListener("click", exportDataAsJson);
+
+  // 13. Modal Close
   document.getElementById("modal-close-btn")?.addEventListener("click", closeModal);
   document.getElementById("detail-modal")?.addEventListener("click", (e) => {
     if (e.target.id === "detail-modal") closeModal();
   });
+}
+
+function toggleDrawer() {
+  document.getElementById("telemetry-drawer")?.classList.toggle("open");
+}
+
+function closeDrawer() {
+  document.getElementById("telemetry-drawer")?.classList.remove("open");
 }
 
 function fitAllPoints() {
@@ -571,15 +659,15 @@ function fitAllPoints() {
 
   if (points.length > 0) {
     const bounds = L.latLngBounds(points);
-    STATE.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+    STATE.map.fitBounds(bounds, { padding: [60, 60], maxZoom: 14 });
   }
 }
 
-function rebuildTable() {
-  const tbody = document.getElementById("logs-table-body");
+function rebuildDrawerTable() {
+  const tbody = document.getElementById("drawer-logs-body");
   if (!tbody) return;
   tbody.innerHTML = "";
-  STATE.packets.forEach((p) => appendTableRow(p, false));
+  STATE.packets.forEach((p) => appendDrawerTableRow(p, false));
 }
 
 function showDetailModal(packet) {
@@ -589,8 +677,8 @@ function showDetailModal(packet) {
   if (!modal || !content) return;
 
   const tid = packet.telemetry?.train_id || "TRAIN";
-  title.innerText = `TELEMETRY RECORD // ${tid} @ ${packet.received_time_iso || ''}`;
-  content.innerHTML = `<pre class="json-block">${escapeHtml(JSON.stringify(packet, null, 2))}</pre>`;
+  title.innerText = `TELEMETRI AIS // ${tid} @ ${packet.received_time_iso || ''}`;
+  content.innerHTML = `<pre class="clean-json-pre">${escapeHtml(JSON.stringify(packet, null, 2))}</pre>`;
 
   modal.classList.add("active");
 }

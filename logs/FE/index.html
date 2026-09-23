@@ -3,223 +3,300 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tactical Railway AIS // Mission Control</title>
+  <title>168Railway AIS // Live Train Tracking Platform</title>
   
   <!-- Google Fonts: Inter, Outfit, JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   
-  <!-- Custom Tactical Stylesheet -->
+  <!-- Custom Modern Minimalist Stylesheet -->
   <link rel="stylesheet" href="styles.css">
 </head>
-<body class="tactical-hud">
+<body class="clean-theme">
 
   <!-- ====================================================================== -->
-  <!-- 1. TOP TACTICAL NAVIGATION BAR & HUD HEADER                            -->
+  <!-- 1. TOP NAVIGATION HEADER BAR (Clean White, Modern Sans-Serif)          -->
   <!-- ====================================================================== -->
-  <header class="hud-header">
-    <div class="header-left">
-      <div class="radar-pulse-ring"></div>
-      <div class="brand-titles">
-        <div class="brand-badge"><span class="badge-dot"></span> LIVE SDR RF AIS STREAM</div>
-        <h1 class="brand-main">TACTICAL RAILWAY AIS <span class="brand-sub">// MISSION CONTROL</span></h1>
-      </div>
-    </div>
-
-    <!-- Gateway Station Pill -->
-    <div class="gateway-pill" id="gateway-pill">
-      <div class="gw-icon">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 11a8 8 0 0 1 16 0c0 4.418-8 11-8 11s-8-6.582-8-11z"></path>
-          <circle cx="12" cy="11" r="3"></circle>
-        </svg>
-      </div>
-      <div class="gw-details">
-        <div class="gw-title">STASIUN RENDEH <span class="tag-midpoint">TITIK TENGAH GATEWAY</span></div>
-        <div class="gw-coords" id="gw-coords">GPS: -6.58025, 107.24695 | SDR Ingest: Active</div>
-      </div>
-    </div>
-
-    <!-- System Telemetry Metrics -->
-    <div class="header-stats">
-      <div class="stat-box">
-        <div class="stat-label">TOTAL PACKETS</div>
-        <div class="stat-value" id="stat-total-packets">0</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">TRAINS TRACKED</div>
-        <div class="stat-value highlight-cyan" id="stat-active-trains">0</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-label">CONNECTION</div>
-        <div class="stat-value status-online" id="stat-conn-status">
-          <span class="live-dot"></span> ONLINE (SSE)
+  <header class="top-nav-bar">
+    <div class="nav-left">
+      <!-- 168Railway / AIS Brand Logo -->
+      <a href="#" class="brand-logo">
+        <div class="brand-icon-box">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="3" width="16" height="16" rx="3"></rect>
+            <path d="M4 11h16"></path>
+            <circle cx="8" cy="15" r="1.5" fill="currentColor"></circle>
+            <circle cx="16" cy="15" r="1.5" fill="currentColor"></circle>
+            <path d="M8 19l-2 3M16 19l2 3"></path>
+          </svg>
         </div>
+        <div class="brand-text-group">
+          <span class="brand-name">168Railway <span class="brand-badge-ais">AIS LIVE</span></span>
+        </div>
+      </a>
+
+      <!-- PPKA Button (Vivid Green Pill) -->
+      <button class="btn-ppka-pill" id="btn-toggle-gateway">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M5 12h14M12 5l7 7-7 7"></path>
+        </svg>
+        <span>PPKA</span>
+        <span class="ppka-tag">GATEWAY</span>
+      </button>
+
+      <!-- Nav Links / Rounded Pills -->
+      <nav class="nav-links">
+        <button class="nav-pill active" id="nav-live-map">Peta Live</button>
+        <button class="nav-pill" id="nav-info-lintas">Info Lintas <span class="nav-pill-badge" id="nav-badge-events">0</span></button>
+        <button class="nav-pill" id="nav-dinasan">Dinasan <span class="nav-pill-badge badge-green" id="nav-badge-trains">0</span></button>
+        <button class="nav-pill" id="nav-stasiun">Stasiun Rendeh</button>
+        <button class="nav-pill" id="nav-telemetry-log">Log Telemetri</button>
+      </nav>
+    </div>
+
+    <div class="nav-right">
+      <!-- Search Input Box -->
+      <div class="search-input-pill">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="train-search-box" placeholder="Cari kereta (0x0002, 0x0003)..." />
       </div>
+
+      <!-- Action Buttons -->
+      <button class="nav-btn-text" id="btn-export-nav">Export JSON</button>
+      <button class="btn-vivid-green" id="btn-live-stream-toggle">
+        <span class="live-dot-green"></span>
+        STREAM ACTIVE
+      </button>
     </div>
   </header>
 
   <!-- ====================================================================== -->
-  <!-- 2. MAIN COCKPIT: INTERACTIVE MAP & LIVE TRAIN HUD CARDS                 -->
+  <!-- 2. FULL VIEWPORT MAP & FLOATING OVERLAYS                               -->
   <!-- ====================================================================== -->
-  <main class="cockpit-container">
-    
-    <!-- Left / Center: Tactical Map Viewport -->
-    <section class="map-section glass-panel">
-      <!-- Floating Map HUD Bar -->
-      <div class="map-floating-hud">
-        <div class="hud-group">
-          <button class="hud-btn active" id="btn-fit-all" title="Fit all trains and stations">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
-            OVERVIEW
-          </button>
-          <button class="hud-btn" id="btn-center-gw" title="Center map on Midpoint Station">
-            STATION RENDEH
-          </button>
-          <button class="hud-btn" id="btn-center-train2" title="Focus Train 0x0002">
-            TRAIN 0x0002
-          </button>
-          <button class="hud-btn" id="btn-center-train3" title="Focus Train 0x0003">
-            TRAIN 0x0003
-          </button>
-        </div>
+  <main class="map-viewport-wrapper">
+    <!-- Leaflet Map Container -->
+    <div id="tactical-map" class="full-map"></div>
 
-        <div class="hud-group">
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-tracks" checked>
-            <span class="toggle-slider"></span>
-            <span>RAIL CORRIDORS</span>
-          </label>
-          <label class="toggle-control">
-            <input type="checkbox" id="toggle-vectors" checked>
-            <span class="toggle-slider"></span>
-            <span>DISTANCE VECTORS</span>
-          </label>
-        </div>
+    <!-- Top-Center Floating Live Status Pill -->
+    <div class="floating-top-pill">
+      <div class="top-pill-clock-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+      </div>
+      <span>Kamu melihat <strong class="text-amber">TELEMETRI AIS LIVE</strong> • Gateway: Stasiun Rendeh</span>
+      <span class="info-circle" title="Data diperbarui secara real-time via LoRa SDR mesh ingestion">ⓘ</span>
+    </div>
+
+    <!-- Top-Right Floating Clock & Train Counter Widget -->
+    <div class="floating-top-right-widget">
+      <div class="live-clock-display" id="clock-display">21:26:05</div>
+      <div class="clock-divider"></div>
+      <div class="live-train-counter">
+        <span class="train-pulse-dot"></span>
+        <span id="trains-active-count">2 trains</span>
+      </div>
+      <div class="map-layer-selector" title="Ganti jenis peta satelit / jalan">
+        <button class="btn-layer-dropdown" id="btn-toggle-basemap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Floating Left Sidebar Navigation Widgets -->
+    <aside class="floating-left-sidebar">
+      <button class="sidebar-pill-widget" id="sidebar-btn-info">
+        <span class="pill-icon text-red">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </span>
+        <span class="pill-label">Info Lintas</span>
+        <span class="pill-badge badge-red" id="sidebar-badge-packets">0</span>
+      </button>
+
+      <button class="sidebar-pill-widget active" id="sidebar-btn-dinasan">
+        <span class="pill-icon text-green">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="3" width="16" height="16" rx="3"></rect>
+            <path d="M4 11h16"></path>
+            <circle cx="8" cy="15" r="1.5"></circle>
+            <circle cx="16" cy="15" r="1.5"></circle>
+          </svg>
+        </span>
+        <span class="pill-label">Dinasan</span>
+        <span class="pill-badge badge-green" id="sidebar-badge-trains">2</span>
+      </button>
+
+      <div class="sidebar-pill-widget" id="sidebar-btn-legenda">
+        <span class="pill-dots">
+          <span class="dot dot-cyan"></span>
+          <span class="dot dot-amber"></span>
+          <span class="dot dot-purple"></span>
+          <span class="dot dot-green"></span>
+        </span>
+        <span class="pill-label">Legenda</span>
+        <span class="pill-arrow">›</span>
       </div>
 
-      <!-- Leaflet Map Container -->
-      <div id="tactical-map" class="tactical-map"></div>
+      <!-- Expandable Legenda Box -->
+      <div class="legenda-dropdown-panel" id="legenda-panel">
+        <div class="legenda-row"><span class="legenda-color bg-cyan"></span> Jalur Konvensional (Gambir - Bandung)</div>
+        <div class="legenda-row"><span class="legenda-color bg-amber"></span> Segmen 2 (Titik Tengah - Bandung)</div>
+        <div class="legenda-row"><span class="legenda-color bg-purple"></span> Kereta Cepat Whoosh (Halim - Tegalluar)</div>
+        <div class="legenda-row"><span class="legenda-marker-circle bg-station"></span> Gateway Stasiun Rendeh (Titik Tengah)</div>
+        <div class="legenda-row"><span class="legenda-marker-circle bg-train-blue"></span> Kereta Aktif (Circular Location Marker)</div>
+      </div>
+    </aside>
 
-      <!-- Map Legend Overlay -->
-      <div class="map-legend-overlay">
-        <div class="legend-item"><span class="legend-line line-conv"></span> Jalur Konvensional (Gambir - Bandung)</div>
-        <div class="legend-item"><span class="legend-line line-seg2"></span> Segmen 2 (Titik Tengah - Bandung)</div>
-        <div class="legend-item"><span class="legend-line line-whoosh"></span> Kereta Cepat Whoosh</div>
-        <div class="legend-item"><span class="legend-marker marker-gw"></span> Gateway Stasiun Rendeh</div>
+    <!-- Floating Active Journeys / Train Telemetry Card (Desktop Mockup Style) -->
+    <section class="floating-train-card-widget" id="trains-floating-card">
+      <div class="widget-card-header">
+        <div class="card-title-group">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="3" width="16" height="16" rx="3"></rect>
+            <path d="M4 11h16"></path>
+          </svg>
+          <h3>Active Journeys</h3>
+          <span class="counter-badge" id="card-trains-count">2</span>
+        </div>
+        <button class="btn-card-collapse" id="btn-collapse-journeys">−</button>
+      </div>
+
+      <!-- Train list container -->
+      <div class="train-journeys-list" id="journeys-list-container">
+        <!-- Rendered dynamically by app.js -->
       </div>
     </section>
 
-    <!-- Right: Real-Time Train Telemetry HUD Panel -->
-    <aside class="trains-section glass-panel">
-      <div class="panel-header">
-        <h2 class="panel-title">
+    <!-- Floating Bottom Left Controls & Service Pill -->
+    <div class="floating-bottom-left">
+      <div class="map-action-buttons">
+        <button class="map-circle-btn" id="btn-fit-overview" title="Overview Seluruh Rute">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-            <path d="M8 21h8M12 17v4"></path>
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
           </svg>
-          ACTIVE TRAIN TELEMETRY
-        </h2>
-        <span class="badge-counter" id="train-counter-badge">0 LIVE</span>
+        </button>
+        <button class="map-circle-btn" id="btn-focus-gateway" title="Pusatkan ke Stasiun Rendeh">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="22" y1="12" x2="18" y2="12"></line>
+            <line x1="6" y1="12" x2="2" y2="12"></line>
+            <line x1="12" y1="6" x2="12" y2="2"></line>
+            <line x1="12" y1="22" x2="12" y2="18"></line>
+          </svg>
+        </button>
       </div>
 
-      <!-- Scrollable Dynamic Cards Container -->
-      <div class="train-cards-grid" id="train-cards-container">
-        <!-- Placeholder when loading -->
-        <div class="empty-placeholder" id="trains-empty-state">
-          <div class="loading-spinner"></div>
-          <p>Mendengarkan siaran telemetri RF dari Kereta...</p>
-          <span class="subtext">Data akan otomatis tampil begitu paket 25-byte diterima oleh SDR.</span>
+      <!-- KAI Service Status Pill (Matching 168Railway bottom banner) -->
+      <div class="bottom-service-pill">
+        <button class="btn-close-service" id="btn-close-pill">✕</button>
+        <span class="service-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+          </svg>
+        </span>
+        <span class="service-text">Layanan telemetri AIS Kereta Api • Stasiun Rendeh Gateway Aktif</span>
+      </div>
+    </div>
+
+    <!-- Floating Bottom Right Stream Table Button -->
+    <div class="floating-bottom-right">
+      <button class="btn-floating-logs" id="btn-toggle-log-drawer" title="Buka Tabel Telemetri Log">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span class="stream-badge-pulse"></span>
+      </button>
+    </div>
+
+    <!-- ==================================================================== -->
+    <!-- 3. SLIDE-UP TELEMETRY PACKET LOG DRAWER                               -->
+    <!-- ==================================================================== -->
+    <div class="slideup-drawer" id="telemetry-drawer">
+      <div class="drawer-header">
+        <div class="drawer-title-group">
+          <h3>TELEMETRY PACKET STREAM LOG</h3>
+          <span class="drawer-file-tag">logs/gateway_telemetry.jsonl</span>
+        </div>
+
+        <div class="drawer-actions">
+          <div class="drawer-filter">
+            <label for="filter-train-drawer">FILTER:</label>
+            <select id="filter-train-drawer" class="clean-select">
+              <option value="ALL">Semua Kereta</option>
+              <option value="0x0002">Train 0x0002</option>
+              <option value="0x0003">Train 0x0003</option>
+            </select>
+          </div>
+
+          <button class="drawer-btn" id="btn-toggle-autoscroll">
+            <span class="dot-active" id="autoscroll-dot"></span> Autoscroll: ON
+          </button>
+
+          <button class="drawer-btn-export" id="btn-drawer-export">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+            Export JSON
+          </button>
+
+          <button class="drawer-btn-close" id="btn-close-drawer">✕</button>
         </div>
       </div>
-    </aside>
+
+      <div class="drawer-table-wrapper" id="drawer-table-container">
+        <table class="clean-table">
+          <thead>
+            <tr>
+              <th>WAKTU (UTC)</th>
+              <th>TRAIN ID</th>
+              <th>GPS COORD (LAT, LON)</th>
+              <th>JARAK KE GATEWAY</th>
+              <th>KECEPATAN</th>
+              <th>HEADING</th>
+              <th>BATERAI</th>
+              <th>SUHU</th>
+              <th>CPU</th>
+              <th>STATUS SISTEM</th>
+              <th>RF CORR</th>
+              <th>RAW HEX PAYLOAD</th>
+            </tr>
+          </thead>
+          <tbody id="drawer-logs-body">
+            <!-- Populated dynamically by app.js -->
+          </tbody>
+        </table>
+      </div>
+    </div>
 
   </main>
 
   <!-- ====================================================================== -->
-  <!-- 3. BOTTOM PANEL: TELEMETRY PACKET STREAM LOG TABLE                     -->
+  <!-- 4. MODAL DETAIL INSPECTOR                                              -->
   <!-- ====================================================================== -->
-  <section class="logs-section glass-panel">
-    <div class="logs-header">
-      <div class="logs-header-left">
-        <h2 class="panel-title">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="8" y1="6" x2="21" y2="6"></line>
-            <line x1="8" y1="12" x2="21" y2="12"></line>
-            <line x1="8" y1="18" x2="21" y2="18"></line>
-            <line x1="3" y1="6" x2="3.01" y2="6"></line>
-            <line x1="3" y1="12" x2="3.01" y2="12"></line>
-            <line x1="3" y1="18" x2="3.01" y2="18"></line>
-          </svg>
-          TELEMETRY PACKET LOG
-        </h2>
-        <span class="log-file-label">logs/gateway_telemetry.jsonl</span>
+  <div class="clean-modal-backdrop" id="detail-modal">
+    <div class="clean-modal-card">
+      <div class="clean-modal-header">
+        <h4 id="modal-title">TELEMETRY RECORD DETAIL</h4>
+        <button class="clean-modal-close" id="modal-close-btn">&times;</button>
       </div>
-
-      <!-- Filters & Actions -->
-      <div class="logs-controls">
-        <div class="filter-group">
-          <label for="filter-train">TRAIN:</label>
-          <select id="filter-train" class="tactical-select">
-            <option value="ALL">ALL TRAINS</option>
-            <option value="0x0002">TRAIN 0x0002</option>
-            <option value="0x0003">TRAIN 0x0003</option>
-          </select>
-        </div>
-
-        <button class="action-btn" id="btn-toggle-autoscroll" title="Toggle automatic scrolling to latest log">
-          <span class="btn-dot dot-active" id="autoscroll-dot"></span> AUTOSCROLL: ON
-        </button>
-
-        <button class="action-btn" id="btn-export-json" title="Download historical telemetry as JSON">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-          </svg>
-          EXPORT JSON
-        </button>
-      </div>
-    </div>
-
-    <!-- Packet Table Wrapper -->
-    <div class="table-wrapper" id="table-container">
-      <table class="tactical-table">
-        <thead>
-          <tr>
-            <th>TIMESTAMP</th>
-            <th>TRAIN ID</th>
-            <th>GPS COORD (LAT, LON)</th>
-            <th>DIST TO GW</th>
-            <th>SPEED</th>
-            <th>HEADING</th>
-            <th>BATTERY</th>
-            <th>TEMP</th>
-            <th>CPU</th>
-            <th>SYSTEM STATUS</th>
-            <th>RF CORR</th>
-            <th>RAW HEX</th>
-          </tr>
-        </thead>
-        <tbody id="logs-table-body">
-          <!-- Populated dynamically by app.js -->
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ====================================================================== -->
-  <!-- 4. MODAL: DETAILED TELEMETRY INSPECTOR                                 -->
-  <!-- ====================================================================== -->
-  <div class="modal-overlay" id="detail-modal">
-    <div class="modal-dialog glass-panel">
-      <div class="modal-header">
-        <h3 class="modal-title" id="modal-title">TRAIN TELEMETRY INSPECTOR</h3>
-        <button class="modal-close" id="modal-close-btn">&times;</button>
-      </div>
-      <div class="modal-body" id="modal-content">
+      <div class="clean-modal-body" id="modal-content">
         <!-- Rendered dynamically -->
       </div>
     </div>
