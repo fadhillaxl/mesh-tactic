@@ -55,6 +55,11 @@ from tsm.telemetry import (
     HEX_PREFIX,
 )
 from tsm.gateway import RailwayAISGateway
+from tsm.routes import (
+    haversine_distance_m,
+    DEFAULT_GATEWAY_LAT,
+    DEFAULT_GATEWAY_LON,
+)
 
 try:
     import iio
@@ -197,8 +202,11 @@ class UnicastSDRChat:
         mac_mode: str = "lbt",
         sim_enabled: bool = False,
         sim_interval: float = 5.0,
+        sim_route: str = "auto",
         is_gateway: bool = False,
-        gateway_station_name: str = "Stasiun Central (Macbook Gateway)",
+        gateway_station_name: str = "Titik Tengah Utama (Stasiun Rendeh)",
+        gateway_lat: float = DEFAULT_GATEWAY_LAT,
+        gateway_lon: float = DEFAULT_GATEWAY_LON,
         gateway_log_file: str = "logs/gateway_telemetry.jsonl",
         gateway_log_enabled: bool = True,
         gateway_mqtt_enabled: bool = False,
@@ -218,7 +226,7 @@ class UnicastSDRChat:
         self.enable_relay = enable_relay
         self.sim_enabled = sim_enabled
         self.sim_interval = max(0.5, float(sim_interval))
-        self.simulator = DummyGPSSimulator(train_id=self.node_id)
+        self.simulator = DummyGPSSimulator(train_id=self.node_id, route_name=sim_route)
         self.sim_thread: Optional[threading.Thread] = None
         self.running = False
         self.seq_counter = 0
@@ -233,6 +241,8 @@ class UnicastSDRChat:
             self.gateway = RailwayAISGateway(
                 node_id=self.node_id,
                 station_name=gateway_station_name,
+                latitude=gateway_lat,
+                longitude=gateway_lon,
                 log_enabled=gateway_log_enabled,
                 log_file=gateway_log_file,
                 mqtt_enabled=gateway_mqtt_enabled,
@@ -446,9 +456,16 @@ class UnicastSDRChat:
         corr_info = f" | {corr:.2f}" if corr is not None else ""
         telem = TrainAISTelemetry.from_payload_string(packet.payload)
         gw_note = ""
+        gw_lat = self.gateway.latitude if self.gateway else DEFAULT_GATEWAY_LAT
+        gw_lon = self.gateway.longitude if self.gateway else DEFAULT_GATEWAY_LON
+
         if telem and self.gateway:
             self.gateway.ingest(packet, telem, corr=corr)
-            gw_note = f"\n       \033[94m[GATEWAY INGEST]\033[0m Logged -> {self.gateway.log_path.name}"
+            dist_km = (
+                haversine_distance_m(self.gateway.latitude, self.gateway.longitude, telem.latitude, telem.longitude)
+                / 1000.0
+            )
+            gw_note = f"\n       \033[94m[GATEWAY INGEST @ {self.gateway.station_name}]\033[0m Dist: {dist_km:.1f} km -> {self.gateway.log_path.name}"
 
         # ======================================================================
         # RECEPTION FILTERING LOGIC
@@ -459,7 +476,7 @@ class UnicastSDRChat:
                 print(
                     f"\r\033[K[{now_str}] \033[92m[RX UNICAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
                     f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
-                    f"       {telem.format_display()}{gw_note}",
+                    f"       {telem.format_display(gw_lat=gw_lat, gw_lon=gw_lon)}{gw_note}",
                     flush=True,
                 )
             else:
@@ -475,7 +492,7 @@ class UnicastSDRChat:
                 print(
                     f"\r\033[K[{now_str}] \033[96m[RX BROADCAST AIS TELEMETRY from Node 0x{packet.src_id:04X}{corr_info}]\033[0m\n"
                     f"       Hex Raw: \033[90m{packet.payload}\033[0m\n"
-                    f"       {telem.format_display()}{gw_note}",
+                    f"       {telem.format_display(gw_lat=gw_lat, gw_lon=gw_lon)}{gw_note}",
                     flush=True,
                 )
             else:
@@ -491,7 +508,7 @@ class UnicastSDRChat:
             # Show operator that packet was physically received over RF but addressed elsewhere
             if telem:
                 print(
-                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD AIS TELEMETRY{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} | {telem.format_display()}{gw_note}\033[0m",
+                    f"\r\033[K\033[90m[{now_str}] [OVERHEARD AIS TELEMETRY{corr_info}] Node 0x{packet.src_id:04X} -> Node 0x{packet.dst_id:04X} | {telem.format_display(gw_lat=gw_lat, gw_lon=gw_lon)}{gw_note}\033[0m",
                     flush=True,
                 )
             else:
@@ -561,10 +578,10 @@ class UnicastSDRChat:
         print(f" Default Target:   \033[93m{'BROADCAST' if self.target_id == BROADCAST_ID else hex(self.target_id)}\033[0m")
         print(f" Multi-Hop Relay:  \033[95m{'ENABLED' if self.enable_relay else 'DISABLED'}\033[0m")
         print(f" MAC Protocol:     \033[96m{self.mac.mode.value.upper()}\033[0m (Anti-Collision: LBT & S-TDMA Ready)")
-        sim_stat = f"\033[92mACTIVE (every {self.sim_interval:.1f}s)\033[0m" if self.sim_enabled else "\033[90mINACTIVE\033[0m"
+        sim_stat = f"\033[92mACTIVE (every {self.sim_interval:.1f}s, {self.simulator.route_title})\033[0m" if self.sim_enabled else f"\033[90mINACTIVE ({self.simulator.route_title})\033[0m"
         print(f" GPS/Telem Sim:    {sim_stat}")
         if self.is_gateway and self.gateway:
-            print(f" Gateway Station:  \033[94mACTIVE - {self.gateway.station_name}\033[0m")
+            print(f" Gateway Station:  \033[94mACTIVE - {self.gateway.station_name} @ ({self.gateway.latitude:.5f}, {self.gateway.longitude:.5f})\033[0m")
             print(f" Telemetry Uplink: \033[92mLOG ONLY\033[0m ({self.gateway.log_path.name}) [MQTT: Standby]")
         else:
             print(f" Gateway Station:  \033[90mDISABLED (Standard Node)\033[0m")
@@ -688,11 +705,14 @@ class UnicastSDRChat:
                         print(f"[*] Emergency Brake status: {state_str}")
                     elif subcmd == "status":
                         curr = self.simulator.current_telemetry()
+                        gw_lat = self.gateway.latitude if self.gateway else DEFAULT_GATEWAY_LAT
+                        gw_lon = self.gateway.longitude if self.gateway else DEFAULT_GATEWAY_LON
                         print(
                             f"[*] Simulation State:\n"
-                            f"    Active:   {'ENABLED' if self.sim_enabled else 'DISABLED'} (Interval: {self.sim_interval:.1f}s)\n"
-                            f"    {curr.format_display()}\n"
-                            f"    Hex Code: \033[90m{curr.to_hex_payload()}\033[0m"
+                            f"    Active:    {'ENABLED' if self.sim_enabled else 'DISABLED'} (Interval: {self.sim_interval:.1f}s)\n"
+                            f"    Corridor:  {self.simulator.route_title} (Waypoints: {len(self.simulator.waypoints)})\n"
+                            f"    {curr.format_display(gw_lat=gw_lat, gw_lon=gw_lon)}\n"
+                            f"    Hex Code:  \033[90m{curr.to_hex_payload()}\033[0m"
                         )
                     else:
                         print(f"[ERROR] Unknown /sim command. Use: /sim on [sec], /sim off, /sim once, /sim brake [on|off], /sim status")
@@ -844,6 +864,11 @@ def main():
         help=f"Simulation telemetry broadcast interval in seconds (default from .env: {cfg.sim_interval:.1f})",
     )
     parser.add_argument(
+        "--route",
+        default="",
+        help=f"GPS simulation route / corridor ('auto', 'jakarta-bandung', 'tengah-bandung', 'whoosh', or path) (default from .env: {cfg.sim_route})",
+    )
+    parser.add_argument(
         "--gateway",
         action="store_true",
         default=None,
@@ -890,9 +915,12 @@ def main():
     mac_mode = args.mac or cfg.mac_mode
     sim_enabled = args.sim if args.sim is not None else cfg.sim_enabled
     sim_interval = args.sim_interval if args.sim_interval is not None else cfg.sim_interval
+    sim_route = args.route or cfg.sim_route
 
     is_gateway = args.gateway if args.gateway is not None else cfg.is_gateway
     station_name = args.station or cfg.gateway_station_name
+    gateway_lat = cfg.gateway_lat
+    gateway_lon = cfg.gateway_lon
     gateway_log = args.gateway_log or cfg.gateway_log_file
 
     chat = UnicastSDRChat(
@@ -909,8 +937,11 @@ def main():
         mac_mode=mac_mode,
         sim_enabled=sim_enabled,
         sim_interval=sim_interval,
+        sim_route=sim_route,
         is_gateway=is_gateway,
         gateway_station_name=station_name,
+        gateway_lat=gateway_lat,
+        gateway_lon=gateway_lon,
         gateway_log_file=gateway_log,
         gateway_log_enabled=cfg.gateway_log_enabled,
         gateway_mqtt_enabled=cfg.gateway_mqtt_enabled,

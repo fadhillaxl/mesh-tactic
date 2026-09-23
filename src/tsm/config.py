@@ -138,6 +138,8 @@ class AppConfig:
     # Railway AIS & Gateway Station
     is_gateway: bool
     gateway_station_name: str
+    gateway_lat: float
+    gateway_lon: float
     gateway_log_file: str
     gateway_log_enabled: bool
     gateway_mqtt_enabled: bool
@@ -148,6 +150,7 @@ class AppConfig:
     # AIS GPS Simulation Mode
     sim_enabled: bool
     sim_interval: float
+    sim_route: str
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -185,7 +188,9 @@ class AppConfig:
             socket_tx_port=_get_int("SOCKET_TX_PORT", 52001),
             socket_rx_port=_get_int("SOCKET_RX_PORT", 52002),
             is_gateway=_get_bool("IS_GATEWAY", False),
-            gateway_station_name=_get_str("GATEWAY_STATION_NAME", "Stasiun Central (Macbook Gateway)"),
+            gateway_station_name=_get_str("GATEWAY_STATION_NAME", "Titik Tengah Utama (Stasiun Rendeh)"),
+            gateway_lat=_get_float("GATEWAY_LAT", -6.58025),
+            gateway_lon=_get_float("GATEWAY_LON", 107.24695),
             gateway_log_file=_get_str("GATEWAY_LOG_FILE", "logs/gateway_telemetry.jsonl"),
             gateway_log_enabled=_get_bool("GATEWAY_LOG_ENABLED", True),
             gateway_mqtt_enabled=_get_bool("GATEWAY_MQTT_ENABLED", False),
@@ -194,6 +199,7 @@ class AppConfig:
             gateway_mqtt_topic=_get_str("GATEWAY_MQTT_TOPIC", "railway/telemetry"),
             sim_enabled=_get_bool("SIM_ENABLED", False),
             sim_interval=_get_float("SIM_INTERVAL", 5.0),
+            sim_route=_get_str("SIM_ROUTE", "auto"),
         )
 
 

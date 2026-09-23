@@ -1,0 +1,22 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "nama": "Titik Tengah Utama",
+                "deskripsi": "Titik tengah pembagi rute Jakarta - Bandung",
+                "koordinat_format_gps": "-6.58025, 107.24695",
+                "wilayah_perkiraan": "Purwakarta / Cianjur area",
+                "stasiun_terdekat": "Stasiun Rendeh"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    107.24695,
+                    -6.58025
+                ]
+            }
+        }
+    ]
+}

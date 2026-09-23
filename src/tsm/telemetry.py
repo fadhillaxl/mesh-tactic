@@ -8,7 +8,14 @@ import time
 import math
 import struct
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
+from tsm.routes import (
+    haversine_distance_m,
+    calculate_bearing_deg,
+    get_route_waypoints,
+    DEFAULT_GATEWAY_LAT,
+    DEFAULT_GATEWAY_LON,
+)
 
 # Opcode marker for Railway AIS Telemetry (ASCII 'T' = 0x54)
 AIS_TELEMETRY_OPCODE = 0x54
@@ -200,14 +207,20 @@ class TrainAISTelemetry:
         except (ValueError, TypeError):
             return None
 
-    def format_display(self) -> str:
-        """Formatted human-readable telemetry summary for UI and terminals."""
+    def format_display(
+        self,
+        gw_lat: float = DEFAULT_GATEWAY_LAT,
+        gw_lon: float = DEFAULT_GATEWAY_LON,
+    ) -> str:
+        """Formatted human-readable telemetry summary for UI and terminals with distance to Gateway."""
         time_str = time.strftime("%H:%M:%S", time.localtime(self.timestamp))
         status_color = "\033[91m" if self.condition.is_emergency else "\033[92m"
+        dist_gw_km = haversine_distance_m(self.latitude, self.longitude, gw_lat, gw_lon) / 1000.0
 
         return (
             f"Train 0x{self.train_id:04X} [{time_str}] | "
             f"GPS: ({self.latitude:.5f}, {self.longitude:.5f}) | "
+            f"Dist to Gateway: {dist_gw_km:.1f} km | "
             f"Spd: {self.speed_kmh:.1f} km/h | Hdg: {self.heading_deg:.1f}° | "
             f"Bat: {self.condition.battery_volts:.2f}V | Temp: {self.condition.temperature_c}°C | "
             f"CPU: {self.condition.cpu_load_pct}% | "
@@ -217,33 +230,52 @@ class TrainAISTelemetry:
 
 class DummyGPSSimulator:
     """
-    Simulates train movement along a realistic railway corridor with dynamic
-    device health conditions (battery drain, temperature, emergency brake).
-    Default track route: Gambir -> Manggarai Corridor, Jakarta.
+    Simulates train movement along realistic railway corridors loaded from GeoJSON
+    (Jakarta - Bandung Conventional, Segmen 2 Titik Tengah - Bandung, or Whoosh)
+    with dynamic device health conditions (battery drain, temperature, emergency brake).
     """
 
     def __init__(
         self,
         train_id: int = 0x0002,
-        start_lat: float = -6.1767,
-        start_lon: float = 106.8306,
-        target_lat: float = -6.2100,
-        target_lon: float = 106.8490,
-        cruise_speed_kmh: float = 75.0,
+        route_name: Optional[str] = "auto",
+        waypoints: Optional[List[Tuple[float, float]]] = None,
+        start_lat: Optional[float] = None,
+        start_lon: Optional[float] = None,
+        target_lat: Optional[float] = None,
+        target_lon: Optional[float] = None,
+        cruise_speed_kmh: float = 85.0,
+        sim_speedup: float = 1.0,
     ):
         self.train_id = train_id
-        self.lat = start_lat
-        self.lon = start_lon
-        self.target_lat = target_lat
-        self.target_lon = target_lon
         self.cruise_speed = cruise_speed_kmh
+        self.sim_speedup = max(0.1, float(sim_speedup))
         self.speed = 0.0
-        self.heading = 150.0  # Initial bearing South-East
         self.battery_mv = 12750
         self.temp_c = 38
         self.cpu_pct = 15
         self.emergency_brake = False
         self.last_update = time.time()
+
+        # Resolve track waypoints from GeoJSON or route preset
+        if waypoints and len(waypoints) >= 2:
+            self.route_title = "Custom Waypoints"
+            self.waypoints = list(waypoints)
+        elif start_lat is not None and start_lon is not None and target_lat is not None and target_lon is not None:
+            self.route_title = "Point-to-Point"
+            self.waypoints = [(start_lat, start_lon), (target_lat, target_lon)]
+        else:
+            self.route_title, self.waypoints = get_route_waypoints(route_name, node_id=train_id)
+
+        self.waypoint_idx = 1 if len(self.waypoints) > 1 else 0
+        self.direction = 1  # 1 = forward, -1 = reverse
+
+        # Initial coordinates
+        self.lat, self.lon = self.waypoints[0]
+        if len(self.waypoints) > 1:
+            self.heading = calculate_bearing_deg(self.lat, self.lon, self.waypoints[1][0], self.waypoints[1][1])
+        else:
+            self.heading = 0.0
 
     def set_emergency(self, active: bool = True):
         self.emergency_brake = active
@@ -251,8 +283,31 @@ class DummyGPSSimulator:
     def set_emergency_brake(self, active: bool = True):
         self.emergency_brake = active
 
+    def current_telemetry(self) -> TrainAISTelemetry:
+        flags = FLAG_GPS_LOCKED | FLAG_DOORS_LOCKED | FLAG_SDR_HEALTHY
+        if self.speed > 1.0:
+            flags |= FLAG_ENGINE_ACTIVE
+        if self.emergency_brake:
+            flags |= FLAG_EMERGENCY_BRAKE
+
+        cond = DeviceCondition(
+            battery_mv=self.battery_mv,
+            temperature_c=self.temp_c,
+            cpu_load_pct=self.cpu_pct,
+            flags=flags,
+        )
+        return TrainAISTelemetry(
+            train_id=self.train_id,
+            timestamp=int(time.time()),
+            latitude=self.lat,
+            longitude=self.lon,
+            speed_kmh=self.speed,
+            heading_deg=self.heading,
+            condition=cond,
+        )
+
     def step(self, dt: Optional[float] = None) -> TrainAISTelemetry:
-        """Advances simulation by dt seconds and returns fresh TrainAISTelemetry."""
+        """Advances simulation along track by dt seconds and returns fresh TrainAISTelemetry."""
         now = time.time()
         delta = (now - self.last_update) if dt is None else dt
         delta = max(0.1, min(10.0, delta))
@@ -260,42 +315,48 @@ class DummyGPSSimulator:
 
         # Speed acceleration / deceleration
         if self.emergency_brake:
-            self.speed = max(0.0, self.speed - 35.0 * delta)  # Rapid emergency deceleration
+            self.speed = max(0.0, self.speed - 35.0 * delta)
         else:
             if self.speed < self.cruise_speed:
                 self.speed = min(self.cruise_speed, self.speed + 8.0 * delta)
 
-        # Bearing to destination
-        d_lat = self.target_lat - self.lat
-        d_lon = self.target_lon - self.lon
-        dist_deg = math.hypot(d_lat, d_lon)
+        if len(self.waypoints) >= 2:
+            target_lat, target_lon = self.waypoints[self.waypoint_idx]
+            dist_to_wp = haversine_distance_m(self.lat, self.lon, target_lat, target_lon)
 
-        if dist_deg < 0.0005:
-            # Reached waypoint -> reverse target route
-            self.target_lat, self.target_lon, self.lat, self.lon = (
-                self.lat,
-                self.lon,
-                self.target_lat,
-                self.target_lon,
-            )
-            d_lat = self.target_lat - self.lat
-            d_lon = self.target_lon - self.lon
+            # Recompute heading towards target waypoint
+            if dist_to_wp > 1.0:
+                self.heading = calculate_bearing_deg(self.lat, self.lon, target_lat, target_lon)
 
-        # Calculate heading
-        self.heading = (math.degrees(math.atan2(d_lon, d_lat)) + 360.0) % 360.0
+            # Move train along bearing
+            speed_mps = (self.speed * 1000.0) / 3600.0
+            move_m = speed_mps * delta * self.sim_speedup
 
-        # Displace position based on speed
-        speed_mps = (self.speed * 1000.0) / 3600.0
-        dist_m = speed_mps * delta
-        # 1 degree latitude ~ 111,320 meters
-        self.lat += (dist_m * math.cos(math.radians(self.heading))) / 111320.0
-        self.lon += (dist_m * math.sin(math.radians(self.heading))) / (
-            111320.0 * math.cos(math.radians(self.lat))
-        )
+            if move_m >= dist_to_wp or dist_to_wp < 30.0:
+                # Arrived at waypoint! Snap to waypoint coordinate
+                self.lat, self.lon = target_lat, target_lon
+
+                # Determine next waypoint along the corridor
+                next_idx = self.waypoint_idx + self.direction
+                if next_idx >= len(self.waypoints):
+                    # Reached end of corridor (e.g. Bandung) -> reverse heading back towards origin
+                    self.direction = -1
+                    self.waypoint_idx = len(self.waypoints) - 2
+                elif next_idx < 0:
+                    # Reached start of corridor (e.g. Jakarta) -> reverse heading towards destination
+                    self.direction = 1
+                    self.waypoint_idx = 1
+                else:
+                    self.waypoint_idx = next_idx
+            else:
+                # Displace lat/lon by move_m along heading
+                self.lat += (move_m * math.cos(math.radians(self.heading))) / 111320.0
+                self.lon += (move_m * math.sin(math.radians(self.heading))) / (
+                    111320.0 * math.cos(math.radians(self.lat))
+                )
 
         # Device condition dynamics
         self.battery_mv = max(11200, self.battery_mv - int(1 * delta))
-        # Temperature increases slightly under high speed
         target_temp = 38 + int(self.speed / 10.0)
         if self.temp_c < target_temp:
             self.temp_c += 1

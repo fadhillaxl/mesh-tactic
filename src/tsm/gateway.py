@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 
 from tsm.telemetry import TrainAISTelemetry
+from tsm.routes import (
+    haversine_distance_m,
+    DEFAULT_GATEWAY_NAME,
+    DEFAULT_GATEWAY_LAT,
+    DEFAULT_GATEWAY_LON,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -24,8 +30,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 @dataclass
 class GatewayConfig:
     enabled: bool = False
-    station_name: str = "Stasiun Central (Macbook Gateway)"
+    station_name: str = DEFAULT_GATEWAY_NAME
     node_id: int = 0x0001
+    latitude: float = DEFAULT_GATEWAY_LAT
+    longitude: float = DEFAULT_GATEWAY_LON
     log_enabled: bool = True
     log_file: str = "logs/gateway_telemetry.jsonl"
     mqtt_enabled: bool = False
@@ -37,14 +45,17 @@ class GatewayConfig:
 class RailwayAISGateway:
     """
     Station Gateway Bridge:
-    Ingests RF Mesh packets, parses train AIS telemetry, writes structured records
-    to a persistent JSONL log, and provides an extensible uplink pipeline.
+    Ingests RF Mesh packets, parses train AIS telemetry, computes distance from
+    the gateway station, writes structured records to a persistent JSONL log,
+    and provides an extensible uplink pipeline.
     """
 
     def __init__(
         self,
         node_id: int = 0x0001,
-        station_name: str = "Stasiun Central (Macbook Gateway)",
+        station_name: str = DEFAULT_GATEWAY_NAME,
+        latitude: float = DEFAULT_GATEWAY_LAT,
+        longitude: float = DEFAULT_GATEWAY_LON,
         log_enabled: bool = True,
         log_file: str = "logs/gateway_telemetry.jsonl",
         mqtt_enabled: bool = False,
@@ -54,6 +65,8 @@ class RailwayAISGateway:
     ):
         self.node_id = node_id & 0xFFFF
         self.station_name = station_name
+        self.latitude = latitude
+        self.longitude = longitude
         self.log_enabled = log_enabled
         self.mqtt_enabled = mqtt_enabled
         self.mqtt_broker = mqtt_broker
@@ -89,9 +102,14 @@ class RailwayAISGateway:
     ) -> bool:
         """
         Submits an incoming MeshPacket with its parsed telemetry to the Gateway queue.
-        Returns True if queued successfully. Non-blocking.
+        Computes distance between the station gateway and the train in km.
         """
         now = time.time()
+        dist_to_train_km = (
+            haversine_distance_m(self.latitude, self.longitude, telemetry.latitude, telemetry.longitude)
+            / 1000.0
+        )
+
         record = {
             "event": "railway_ais_telemetry",
             "received_time_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
@@ -100,6 +118,11 @@ class RailwayAISGateway:
                 "station_name": self.station_name,
                 "node_id": f"0x{self.node_id:04X}",
                 "node_id_int": self.node_id,
+                "gps": {
+                    "latitude": round(self.latitude, 6),
+                    "longitude": round(self.longitude, 6),
+                },
+                "distance_to_train_km": round(dist_to_train_km, 2),
                 "rx_correlation": round(corr, 3) if corr is not None else None,
             },
             "packet": {
@@ -223,7 +246,7 @@ class RailwayAISGateway:
         mqtt_status = f"MQTT: {self.mqtt_broker}:{self.mqtt_port}" if self.mqtt_enabled else "MQTT: Standby (Log Only)"
         rel_log = str(self.log_path.relative_to(REPO_ROOT)) if str(self.log_path).startswith(str(REPO_ROOT)) else str(self.log_path)
         return (
-            f"Gateway [{self.station_name}] | Log: {rel_log} | "
+            f"Gateway [{self.station_name} @ ({self.latitude:.5f}, {self.longitude:.5f})] | Log: {rel_log} | "
             f"Tracked: {train_count} Trains | Ingested: {pkts} pkts | {mqtt_status}"
         )
 

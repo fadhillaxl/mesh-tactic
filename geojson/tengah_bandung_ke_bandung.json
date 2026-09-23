@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Segmen 2: Tengah Bandung ke Bandung",
+        "description": "Jalur dari Titik Tengah melanjutkan menuju Kota Bandung."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            107.24695,
+            -6.58025
+          ],
+          [
+            107.4973,
+            -6.843
+          ],
+          [
+            107.6025,
+            -6.9145
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Titik Tengah (Midpoint)",
+        "description": "Titik pembagi tengah rute Jakarta - Bandung"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          107.24695,
+          -6.58025
+        ]
+      }
+    }
+  ]
+}

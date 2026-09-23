@@ -1,0 +1,67 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Jalur Kereta Cepat Jakarta-Bandung (Whoosh)",
+        "distance_km": 142.3,
+        "type": "High Speed Rail"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            106.8837,
+            -6.2464
+          ],
+          [
+            106.9934,
+            -6.3262
+          ],
+          [
+            107.4912,
+            -6.8407
+          ],
+          [
+            107.7128,
+            -6.9536
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Jalur Kereta Api Konvensional (Gambir - Bandung)",
+        "distance_km": 173.0,
+        "type": "Conventional Rail"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            106.8307,
+            -6.1767
+          ],
+          [
+            106.8416,
+            -6.2151
+          ],
+          [
+            107.0016,
+            -6.2374
+          ],
+          [
+            107.4452,
+            -6.5576
+          ],
+          [
+            107.6119,
+            -6.9141
+          ]
+        ]
+      }
+    }
+  ]
+}
