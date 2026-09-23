@@ -516,11 +516,16 @@ body.clean-theme {
   color: var(--text-muted);
 }
 
-/* Expandable Legenda Box */
+/* Expandable Legenda Box (Flyout popover) */
 .legenda-dropdown-panel {
   display: none;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
+  position: absolute;
+  left: 165px;
+  top: 96px;
+  width: 290px;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-light);
   border-radius: 12px;
   padding: 12px 16px;
@@ -529,6 +534,7 @@ body.clean-theme {
   gap: 8px;
   font-size: 0.75rem;
   color: var(--text-secondary);
+  z-index: 600;
 }
 
 .legenda-dropdown-panel.open {
@@ -560,13 +566,13 @@ body.clean-theme {
 .bg-station { background: #22c55e; border: 2px solid #ffffff; }
 .bg-train-blue { background: #0284c7; border: 2px solid #ffffff; }
 
-/* Floating Active Journeys / Train Card (Mockup Style) */
+/* Floating Active Journeys / Train Card (Docked under Left Sidebar Pills) */
 .floating-train-card-widget {
   position: absolute;
-  top: 18px;
-  left: 175px;
-  width: 360px;
-  max-height: calc(100vh - 120px);
+  top: 165px;
+  left: 20px;
+  width: 330px;
+  max-height: calc(100vh - 280px);
   z-index: 490;
   background: var(--bg-card-translucent);
   backdrop-filter: blur(16px);
@@ -580,12 +586,16 @@ body.clean-theme {
   transition: all var(--transition-normal);
 }
 
+.floating-train-card-widget.hidden {
+  display: none !important;
+}
+
 .floating-train-card-widget.collapsed {
   max-height: 52px;
 }
 
 .widget-card-header {
-  padding: 14px 18px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border-light);
   display: flex;
   justify-content: space-between;
@@ -616,18 +626,40 @@ body.clean-theme {
   border-radius: 9999px;
 }
 
-.btn-card-collapse {
-  background: transparent;
-  border: none;
-  font-size: 1.2rem;
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-card-collapse,
+.btn-card-close {
+  background: #f1f5f9;
+  border: 1px solid var(--border-light);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 0.82rem;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
   line-height: 1;
 }
 
-.btn-card-collapse:hover {
+.btn-card-collapse:hover,
+.btn-card-close:hover {
+  background: #e2e8f0;
   color: var(--text-primary);
+}
+
+.btn-card-close:hover {
+  background: #fee2e2;
+  color: var(--accent-red);
+  border-color: #fca5a5;
 }
 
 .train-journeys-list {
@@ -769,12 +801,14 @@ body.clean-theme {
 
 .map-action-buttons {
   display: flex;
+  flex-direction: column;
   gap: 8px;
+  margin-bottom: 2px;
 }
 
 .map-circle-btn {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   background: #ffffff;
   border: 1px solid var(--border-light);
   border-radius: 50%;
@@ -831,6 +865,37 @@ body.clean-theme {
   bottom: 20px;
   right: 20px;
   z-index: 500;
+}
+
+/* Leaflet Custom Zoom Control Alignment (Elevated above bottom-right logs button) */
+.leaflet-bottom.leaflet-right .leaflet-control-zoom {
+  margin-bottom: 84px !important;
+  margin-right: 20px !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.leaflet-control-zoom a {
+  background-color: #ffffff !important;
+  color: var(--text-primary) !important;
+  border-bottom: 1px solid var(--border-light) !important;
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  transition: all var(--transition-fast) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: #f8fafc !important;
+  color: var(--accent-blue-marker) !important;
+}
+
+.leaflet-control-zoom a:last-child {
+  border-bottom: none !important;
 }
 
 .btn-floating-logs {
@@ -1121,6 +1186,23 @@ body.clean-theme {
   font-family: var(--font-sans) !important;
   font-size: 0.72rem !important;
   box-shadow: var(--shadow-md) !important;
+}
+
+/* Train Marker Label Pill */
+.train-map-label {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border-radius: 6px !important;
+  font-family: var(--font-sans) !important;
+  font-size: 0.72rem !important;
+  font-weight: 600 !important;
+  padding: 3px 8px !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.train-map-label::before {
+  border-top-color: rgba(15, 23, 42, 0.92) !important;
 }
 
 /* Modal */

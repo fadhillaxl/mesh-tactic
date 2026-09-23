@@ -51,9 +51,8 @@
       <!-- Nav Links / Rounded Pills -->
       <nav class="nav-links">
         <button class="nav-pill active" id="nav-live-map">Peta Live</button>
-        <button class="nav-pill" id="nav-info-lintas">Info Lintas <span class="nav-pill-badge" id="nav-badge-events">0</span></button>
-        <button class="nav-pill" id="nav-dinasan">Dinasan <span class="nav-pill-badge badge-green" id="nav-badge-trains">0</span></button>
-        <button class="nav-pill" id="nav-stasiun">Stasiun Rendeh</button>
+        <button class="nav-pill" id="nav-koridor">Koridor Rel</button>
+        <button class="nav-pill" id="nav-stasiun">Stasiun Gateway</button>
         <button class="nav-pill" id="nav-telemetry-log">Log Telemetri</button>
       </nav>
     </div>
@@ -174,7 +173,10 @@
           <h3>Active Journeys</h3>
           <span class="counter-badge" id="card-trains-count">2</span>
         </div>
-        <button class="btn-card-collapse" id="btn-collapse-journeys">−</button>
+        <div class="card-header-actions">
+          <button class="btn-card-collapse" id="btn-collapse-journeys" title="Collapse card">−</button>
+          <button class="btn-card-close" id="btn-close-journeys" title="Tutup card">✕</button>
+        </div>
       </div>
 
       <!-- Train list container -->

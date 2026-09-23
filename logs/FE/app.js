@@ -243,11 +243,17 @@ function updateTrainMarker(trainId, lat, lon, heading, speed) {
   if (!STATE.layers.trains[trainId]) {
     STATE.layers.trains[trainId] = L.marker([lat, lon], { icon: customIcon })
       .addTo(STATE.map)
-      .bindPopup(popupContent);
+      .bindPopup(popupContent)
+      .bindTooltip(`<strong>Train ${trainId}</strong> • ${speed.toFixed(0)} km/h`, {
+        direction: "top",
+        offset: [0, -18],
+        className: "train-map-label",
+      });
   } else {
     STATE.layers.trains[trainId].setLatLng([lat, lon]);
     STATE.layers.trains[trainId].setIcon(customIcon);
     STATE.layers.trains[trainId].setPopupContent(popupContent);
+    STATE.layers.trains[trainId].setTooltipContent(`<strong>Train ${trainId}</strong> • ${speed.toFixed(0)} km/h`);
   }
 
   // 3. Distance Vector Line to Stasiun Rendeh Gateway
@@ -554,17 +560,33 @@ function initUIControls() {
     }
   });
 
-  // 2. Collapse / Expand Active Journeys Card
+  // 2. Collapse / Expand / Close Active Journeys Card
   const cardWidget = document.getElementById("trains-floating-card");
   const btnCollapse = document.getElementById("btn-collapse-journeys");
+  const btnCloseJourneys = document.getElementById("btn-close-journeys");
+  const btnDinasan = document.getElementById("sidebar-btn-dinasan");
+
   btnCollapse?.addEventListener("click", () => {
     cardWidget?.classList.toggle("collapsed");
     btnCollapse.innerText = cardWidget?.classList.contains("collapsed") ? "+" : "−";
   });
 
-  // 3. Sidebar Button: Dinasan
-  document.getElementById("sidebar-btn-dinasan")?.addEventListener("click", () => {
-    cardWidget?.classList.toggle("collapsed");
+  btnCloseJourneys?.addEventListener("click", () => {
+    cardWidget?.classList.add("hidden");
+    btnDinasan?.classList.remove("active");
+  });
+
+  // 3. Sidebar Button: Dinasan (Toggle Card Visibility)
+  btnDinasan?.addEventListener("click", () => {
+    if (!cardWidget) return;
+    const isHidden = cardWidget.classList.contains("hidden");
+    if (isHidden) {
+      cardWidget.classList.remove("hidden");
+      btnDinasan.classList.add("active");
+    } else {
+      cardWidget.classList.add("hidden");
+      btnDinasan.classList.remove("active");
+    }
   });
 
   // 4. Sidebar Button: Info Lintas -> Opens Slideup Drawer
@@ -574,15 +596,18 @@ function initUIControls() {
   document.getElementById("nav-info-lintas")?.addEventListener("click", toggleDrawer);
   document.getElementById("btn-close-drawer")?.addEventListener("click", closeDrawer);
 
-  // 5. Sidebar Button: Legenda Dropdown
+  // 5. Sidebar Button: Legenda Dropdown (Flyout toggle)
   const legendaPanel = document.getElementById("legenda-panel");
-  document.getElementById("sidebar-btn-legenda")?.addEventListener("click", () => {
+  const btnLegenda = document.getElementById("sidebar-btn-legenda");
+  btnLegenda?.addEventListener("click", () => {
     legendaPanel?.classList.toggle("open");
+    btnLegenda.classList.toggle("active");
   });
 
   // 6. Fit All Overview
   document.getElementById("btn-fit-overview")?.addEventListener("click", fitAllPoints);
   document.getElementById("nav-live-map")?.addEventListener("click", fitAllPoints);
+  document.getElementById("nav-koridor")?.addEventListener("click", fitAllPoints);
 
   // 7. Focus Gateway (Stasiun Rendeh)
   document.getElementById("btn-focus-gateway")?.addEventListener("click", () => {
